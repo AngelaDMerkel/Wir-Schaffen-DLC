@@ -28,6 +28,7 @@ FUTURE_WORLDS_ID = "d9ece224-6cd8-4519-a27a-c417b59cdf35"
 CORPORATIONS_ID = "199bbbf8-f80e-449e-a67e-036a7248fb13"
 PACKER_NAMESPACE = uuid.UUID("07186f1e-bfdd-45db-8c1d-f9679e727249")
 SUPPORTED_ACTION = "UpdateDatabase"
+VERSION = "0.1.0"
 
 CORPORATION_SIDECARS = {
     "Buildings": (
@@ -1313,6 +1314,7 @@ def pack(args: argparse.Namespace) -> BuildReport:
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     parser.add_argument("mod", type=Path, help="directory containing one ModBuddy .modinfo file")
     parser.add_argument("output", type=Path, help="new DLC directory to create")
     parser.add_argument("--base-db", type=Path, help="Civ5CoreDatabase.db used to compile supported SQL")

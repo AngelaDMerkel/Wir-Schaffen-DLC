@@ -30,7 +30,41 @@ compiler. Producing no package is safer than silently dropping gameplay data.
 
 No third-party Python packages are required.
 
-## Usage
+## AngelaDMerkel's: Wir Schaffen DLC
+
+The macOS terminal installer discovers Civilization V, reads the mods already
+installed in its `MODS` directory, and presents a numbered selection screen.
+It packages every selected mod first and only then asks permission to copy the
+validated packages into the game's DLC directory.
+
+Quit Civilization V, then double-click `wir-schaffen-dlc.command` in Finder or
+run it from Terminal:
+
+```sh
+./wir-schaffen-dlc.command
+```
+
+The interface is intentionally small: select entries with input such as
+`1,3-5` or `all`, review any compatibility warnings, and confirm installation.
+Existing packages created by the installer are never replaced without an
+additional confirmation.
+
+After a `pip` installation, the same interface is available as
+`wir-schaffen-dlc`.
+
+## Release 0.1.0
+
+Release artifacts include a standalone, double-clickable macOS terminal bundle
+and portable Python wheel/source packages. Native bundles are labeled with the
+architecture and macOS generation they were built for; do not use an
+incompatible native archive on a different Mac.
+
+The standalone binary is ad-hoc signed rather than Apple-notarized. On its
+first launch, macOS may require Control-clicking `Wir Schaffen DLC.command` and
+choosing **Open**. See the [changelog](CHANGELOG.md) and
+[release-build instructions](docs/releasing.md) for details.
+
+## Direct packer usage
 
 ```sh
 python3 civ5_dlc_packer.py \
@@ -41,7 +75,7 @@ python3 civ5_dlc_packer.py \
   --ui-set Expansion2
 ```
 
-With the package installed through `pip`, the equivalent command is
+With the package installed through `pip`, the equivalent direct command is
 `civ5-dlc-packer`.
 
 Install the complete generated folder beneath:
@@ -54,9 +88,9 @@ Every multiplayer participant needs a byte-identical package and the same
 expansion/DLC configuration. Do not enable the original ModBuddy version at the
 same time.
 
-See [the usage guide](docs/usage.md) for detailed macOS paths and known
-limitations. The [compatibility matrix](docs/compatibility.md) records results
-from the development mod collection.
+See [the usage guide](docs/usage.md) for installer options, detailed macOS
+paths, and known limitations. The [compatibility matrix](docs/compatibility.md)
+records results from the development mod collection.
 
 ## Tests
 

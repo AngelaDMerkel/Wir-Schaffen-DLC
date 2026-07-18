@@ -1,4 +1,57 @@
-# Experimental macOS DLC packer
+# macOS installer and DLC packer
+
+## Interactive installer: Wir Schaffen DLC
+
+The easiest workflow is the branded terminal interface. Quit Civilization V,
+then run this from the repository directory:
+
+```sh
+./wir-schaffen-dlc.command
+```
+
+It automatically looks for the normal Steam installation at:
+
+```text
+~/Library/Application Support/Steam/steamapps/common/Sid Meier's Civilization V/Civilization V.app
+```
+
+It reads mods from:
+
+```text
+~/Library/Application Support/Sid Meier's Civilization 5/MODS/
+```
+
+Select mods with numbers, comma-separated numbers, ranges, or `all`. For
+example, `1,3-5` selects entries 1, 3, 4, and 5. The installer packages and
+validates every selection in a temporary directory before touching the game.
+If any build fails, nothing is installed.
+
+The generated folders are installed beneath the application bundle's
+`Contents/Assets/Assets/DLC/` directory. Matching packages are not overwritten
+without confirmation, and a failed multi-package copy is rolled back.
+
+For an unusual Steam library or user-data location, pass the paths explicitly:
+
+```sh
+./wir-schaffen-dlc.command \
+  --game-app "/Volumes/Games/steamapps/common/Sid Meier's Civilization V/Civilization V.app" \
+  --user-data "$HOME/Library/Application Support/Sid Meier's Civilization 5"
+```
+
+Useful automation and diagnostic options are:
+
+```text
+--select 1,3-5   preselect mod numbers
+--select all     select every discovered mod
+--dry-run        package and validate without installing
+--replace        permit replacement of matching tool-installed packages
+--yes            skip the final install confirmation
+```
+
+`--yes` does not imply `--replace`; updating an existing package requires both
+options. The script does not request administrator privileges.
+
+## Direct packer
 
 `civ5_dlc_packer.py` converts a ModBuddy mod directory into a
 Civilization V DLC directory. This is useful on the native macOS build, where
@@ -106,5 +159,5 @@ Run the packer tests with:
 python3 -m unittest discover -s tests -v
 ```
 
-The [local compatibility matrix](packer-compatibility-results.md) records the
+The [local compatibility matrix](compatibility.md) records the
 results from packing all 15 mods installed on the development Mac.

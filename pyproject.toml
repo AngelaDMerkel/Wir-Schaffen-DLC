@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,12 +8,12 @@ version = "0.1.0"
 description = "Convert Civilization V ModBuddy mods into multiplayer-loadable DLC packages"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Civ5 Mod DLC Packer contributors" }]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: MacOS",
   "Programming Language :: Python :: 3",
   "Topic :: Games/Entertainment :: Turn Based Strategy",
@@ -21,6 +21,7 @@ classifiers = [
 
 [project.scripts]
 civ5-dlc-packer = "civ5_dlc_packer:main"
+wir-schaffen-dlc = "civ5_dlc_installer:main"
 
 [tool.setuptools]
-py-modules = ["civ5_dlc_packer"]
+py-modules = ["civ5_dlc_packer", "civ5_dlc_installer"]
