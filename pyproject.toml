@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "civ5-mod-dlc-packer"
-version = "0.1.0"
+version = "0.5.0"
 description = "Convert Civilization V ModBuddy mods into multiplayer-loadable DLC packages"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -24,4 +24,4 @@ civ5-dlc-packer = "civ5_dlc_packer:main"
 wir-schaffen-dlc = "civ5_dlc_installer:main"
 
 [tool.setuptools]
-py-modules = ["civ5_dlc_packer", "civ5_dlc_installer"]
+py-modules = ["civ5_dlc_packer", "civ5_dlc_installer", "civ5_best_mods"]
