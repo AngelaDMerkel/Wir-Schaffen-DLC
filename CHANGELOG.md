@@ -2,6 +2,8 @@
 
 ## 0.5.0 — 2026-08-31
 
+- Replaces the ambiguous program-01 `EXCLUSIVE` badge with `REMOTE` and states
+  directly that seven verified mods are downloaded from authoritative sources.
 - Adds **Restore stock Civilization V** as program 04 and `--restore-stock`.
   It transactionally removes only authenticated Wir Schaffen DLC folders,
   restores and hashes the original executable, invalidates rebuildable game

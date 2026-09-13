@@ -349,9 +349,9 @@ def installation_mode_menu(
     dim = TUI_MUTED if color else ""
     width = terminal_canvas_width()
     descriptions = (
-        "Curated download sequence · exclusive package formation"
+        "Download seven verified mods from authoritative remote sources"
         if width >= 68
-        else "Seven verified mods · exclusive collection",
+        else "Download seven verified remote mods",
         "Manual payload selection from this Civ V installation"
         if width >= 68
         else "Select from local MODS and Maps",
@@ -397,7 +397,7 @@ def installation_mode_menu(
         0,
         best_mods.PRESET_NAME,
         descriptions[0],
-        "EXCLUSIVE",
+        "REMOTE",
         red,
     )
     local_title, local_description = option_lines(
