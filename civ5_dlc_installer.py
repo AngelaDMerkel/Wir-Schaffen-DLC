@@ -2332,7 +2332,7 @@ def run(
     # The existing content/engine modes must not claim stock restoration or
     # introduce a second product while a custom native GameCore is active.
     native_binary = install.game_app / gamecore.BINARY_RELATIVE
-    if native_binary.exists():
+    if native_binary.exists() and not args.restore_engine_patch:
         manager = gamecore.ProductManager(install.game_app, install.user_data)
         native_state = manager._state()
         # The existing executable-patch modes verify their own supported host

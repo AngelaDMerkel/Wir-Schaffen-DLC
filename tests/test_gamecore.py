@@ -287,6 +287,20 @@ class GameCoreTests(unittest.TestCase):
             with self.assertRaisesRegex(core.GameCoreError, 'signature'):
                 core.verify_package(package, self.catalog)
 
+    def test_verified_executable_restoration_can_precede_native_maintenance(self):
+        import civ5_dlc_installer as installer
+        from types import SimpleNamespace
+        args = installer.make_parser().parse_args([
+            '--game-app', str(self.app), '--user-data', str(self.user), '--restore-engine-patch'])
+        install = SimpleNamespace(game_app=self.app, user_data=self.user)
+        self.binary.write_bytes(b'legacy custom GameCore')
+        with patch.object(installer, 'validate_install', return_value=install), patch.object(
+            installer, 'restore_colossal_engine_patch', return_value=True
+        ) as restore:
+            result = installer.run(args, input_fn=lambda question: self.fail(question), output_fn=lambda message: None)
+        self.assertEqual(result, 0)
+        restore.assert_called_once_with(self.app, self.user)
+
 
 if __name__ == '__main__':
     unittest.main()
