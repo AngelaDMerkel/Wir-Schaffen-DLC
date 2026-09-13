@@ -411,6 +411,10 @@ class ProductManager:
         journal = json.loads(journal_path.read_text())
         if journal.get('app') != str(self.app) or set(journal.get('before', {})) != set(self._names()):
             raise GameCoreError('invalid transaction journal')
+        host = self.app / 'Contents/MacOS/Civilization V'
+        self._safe(host)
+        if not host.is_file() or sha256(host) != journal.get('host_sha256'):
+            raise GameCoreError('host changed during the transaction; refusing stale GameCore recovery')
         # Verify every backup before restoring any destination.
         for name, before in journal['before'].items():
             source = self.transaction / 'before' / name
@@ -445,7 +449,7 @@ class ProductManager:
             self.transaction.mkdir()
             before_dir = self.transaction / 'before'
             before_dir.mkdir()
-            journal = {'app': str(self.app), 'before': {}}
+            journal = {'app': str(self.app), 'host_sha256': sha256(self.app / 'Contents/MacOS/Civilization V'), 'before': {}}
             for name in self._names():
                 target = self._target(name)
                 if target.exists():

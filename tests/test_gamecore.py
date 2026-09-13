@@ -263,6 +263,21 @@ class GameCoreTests(unittest.TestCase):
             self.manager.recover()
         self.assertEqual(self.binary.read_bytes(), live)
 
+    def test_steam_host_update_blocks_stale_transaction_recovery(self):
+        real_replace = self.manager._replace
+        def fail(destination, source):
+            real_replace(destination, source)
+            if destination == self.binary:
+                raise OSError('interruption')
+        with patch.object(self.manager, '_replace', side_effect=fail), patch.object(self.manager, '_recover_locked'):
+            with self.assertRaises(OSError):
+                self.manager.switch('lekmod', self.package())
+        live = self.binary.read_bytes()
+        self.host.write_bytes(b'new Steam executable')
+        with self.assertRaisesRegex(core.GameCoreError, 'host changed'):
+            self.manager.recover()
+        self.assertEqual(self.binary.read_bytes(), live)
+
 
 if __name__ == '__main__':
     unittest.main()
