@@ -28,6 +28,7 @@ class GameCoreTests(unittest.TestCase):
         self.catalog['stock_hashes'] = [core.sha256(self.binary)]
         self.catalog['host_hashes'] = [core.sha256(self.host)]
         self.catalog.pop('legacy_lekmod')
+        self.catalog['verify_codesign'] = False  # fixtures contain synthetic binary bytes
         self.manager = core.ProductManager(self.app, self.user, self.catalog)
 
     def package(self, product='lekmod', version='1'):
@@ -277,6 +278,14 @@ class GameCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(core.GameCoreError, 'host changed'):
             self.manager.recover()
         self.assertEqual(self.binary.read_bytes(), live)
+
+    def test_signature_failure_blocks_an_otherwise_hashed_artifact(self):
+        from types import SimpleNamespace
+        package = self.package()
+        self.catalog['verify_codesign'] = True
+        with patch.object(core.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stderr='invalid signature')):
+            with self.assertRaisesRegex(core.GameCoreError, 'signature'):
+                core.verify_package(package, self.catalog)
 
 
 if __name__ == '__main__':

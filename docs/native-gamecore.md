@@ -64,3 +64,8 @@ without a local package fails clearly while no public release exists. Future
 catalog entries must contain a GitHub release URL and independently pinned
 archive digest. No repositories, releases, or branches were published by this
 local reorganization.
+
+Release producers ad-hoc sign the GameCore before hashing it. The installer
+verifies that signature and copies the signed bytes without re-signing, so
+the installed binary continues to match the manifest and state hash. The
+independently pinned archive digest remains the product trust anchor.

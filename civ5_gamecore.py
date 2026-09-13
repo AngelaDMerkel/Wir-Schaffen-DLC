@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 import uuid
 from urllib.parse import urlparse
@@ -153,6 +154,10 @@ def verify_package(directory: Path, catalog: dict = CATALOG) -> dict:
             raise GameCoreError('payload has no root DLC package declaration')
         if not manifest['licenses'] or any(name not in files or not name.startswith('licenses/') for name in manifest['licenses']):
             raise GameCoreError('missing licensing information')
+        if catalog.get('verify_codesign', True):
+            signature = subprocess.run(['codesign', '--verify', '--strict', str(directory / BINARY)], capture_output=True, text=True)
+            if signature.returncode:
+                raise GameCoreError('GameCore code signature verification failed: ' + signature.stderr.strip())
         return manifest
     except (KeyError, TypeError, ValueError, OSError) as error:
         raise GameCoreError('invalid GameCore artifact: ' + str(error)) from error
