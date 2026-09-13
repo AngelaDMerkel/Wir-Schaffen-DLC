@@ -93,3 +93,8 @@ histories.
 
 Wir Schaffen DLC is licensed under the [MIT License](LICENSE). Third-party and
 source attribution is recorded in [NOTICE](NOTICE).
+
+Native Lekmod and Vox Populi GameCore installation, switching, and stock
+restoration are documented in [Native GameCore products](docs/native-gamecore.md).
+The native public catalog is pending validation/publication; local artifacts use
+an explicitly supplied archive SHA-256.

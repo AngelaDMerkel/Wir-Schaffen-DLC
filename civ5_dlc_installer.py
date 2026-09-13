@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover - the interactive installer targets macO
 
 import civ5_dlc_packer as packer
 import civ5_best_mods as best_mods
+import civ5_gamecore as gamecore
 
 
 GAME_APP_NAME = "Civilization V.app"
@@ -2214,6 +2215,10 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--game-app", type=Path, help="path to Civilization V.app")
     parser.add_argument("--user-data", type=Path, help="path containing the MODS and cache directories")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--gamecore', choices=('status', 'stock', 'lekmod', 'vox-populi', 'recover'),
+                      help='inspect, restore, install/update/switch, or recover native GameCore products')
+    parser.add_argument('--gamecore-package', type=Path, help='local native release ZIP (requires its independently recorded SHA-256)')
+    parser.add_argument('--gamecore-sha256', help='trusted SHA-256 of the local native release ZIP')
     mode.add_argument("--select", help="non-interactive installed-mod selection, such as 1,3-5 or all")
     mode.add_argument(
         "--very-best-mods",
@@ -2253,6 +2258,58 @@ def make_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def run_gamecore(
+    args: argparse.Namespace,
+    install: Civ5Install,
+    input_fn: Callable[[str], str],
+    output_fn: Callable[[str], None],
+) -> int:
+    manager = gamecore.ProductManager(install.game_app, install.user_data)
+    product = args.gamecore
+    package_path = getattr(args, 'gamecore_package', None)
+    digest = getattr(args, 'gamecore_sha256', None)
+    if args.map or args.restore_engine_patch:
+        raise InstallerError('native GameCore actions cannot be combined with map or executable-patch actions')
+    if bool(package_path) != bool(digest):
+        raise InstallerError('--gamecore-package and --gamecore-sha256 must be supplied together')
+    if product in ('status', 'recover', 'stock') and package_path:
+        raise InstallerError('status, recovery, and stock restoration do not accept a product archive')
+    if product == 'status':
+        output_fn(json.dumps(manager.status(), indent=2))
+        return 0
+    if product == 'recover':
+        output_fn(json.dumps(manager.status(), indent=2))
+        if args.dry_run:
+            return 0
+        if not args.yes and not yes(input_fn('Restore the installation from the interrupted transaction? [y/N]: ')):
+            return 0
+        if subprocess.run(['pgrep', '-x', 'Civilization V'], capture_output=True).returncode == 0:
+            raise InstallerError('Quit Civilization V before recovering a GameCore transaction')
+        manager.recover()
+        output_fn(json.dumps(manager.status(), indent=2))
+        return 0
+    with tempfile.TemporaryDirectory(prefix='wir-schaffen-native-') as temporary:
+        with contextlib.ExitStack() as stack:
+            package = None
+            manifest = None
+            if product != 'stock':
+                if package_path is None:
+                    package_path, digest = gamecore.download_release(product, Path(temporary) / 'release.zip')
+                package, manifest = stack.enter_context(gamecore.open_artifact(package_path, digest))
+            plan = manager.plan(product, manifest)
+            output_fn(json.dumps(plan, indent=2))
+            if args.dry_run:
+                output_fn('Dry run complete. No application or installation state was changed.')
+                return 0
+            if not args.yes and not yes(input_fn(f'Activate {product} and its matching content? [y/N]: ')):
+                output_fn('No changes made.')
+                return 0
+            if subprocess.run(['pgrep', '-x', 'Civilization V'], capture_output=True).returncode == 0:
+                raise InstallerError('Quit Civilization V before switching GameCore products')
+            output_fn(json.dumps(manager.switch(product, package), indent=2))
+    return 0
+
+
 def run(
     args: argparse.Namespace,
     input_fn: Callable[[str], str] = input,
@@ -2268,6 +2325,23 @@ def run(
     game_app = choose_path("Civilization V application", game_apps, input_fn, output_fn)
     user_data = choose_path("Civilization V user-data directory", user_dirs, input_fn, output_fn)
     install = validate_install(game_app, user_data)
+    if getattr(args, 'gamecore', None):
+        return run_gamecore(args, install, input_fn, output_fn)
+    if getattr(args, 'gamecore_package', None) or getattr(args, 'gamecore_sha256', None):
+        raise InstallerError('native package options require --gamecore')
+    # The existing content/engine modes must not claim stock restoration or
+    # introduce a second product while a custom native GameCore is active.
+    native_binary = install.game_app / gamecore.BINARY_RELATIVE
+    if native_binary.exists():
+        manager = gamecore.ProductManager(install.game_app, install.user_data)
+        native_state = manager._state()
+        # The existing executable-patch modes verify their own supported host
+        # hashes. A stock GameCore must not block restoring a patched executable.
+        has_native_payload = any(manager._payload_path(product).exists() for product in gamecore.PRODUCTS)
+        if (gamecore.sha256(native_binary) not in gamecore.CATALOG['stock_hashes']
+                or manager.transaction.exists() or has_native_payload
+                or (native_state and native_state['product'] != 'stock')):
+            raise InstallerError('Native GameCore requires attention; use --gamecore status, then --gamecore stock before other installation modes')
     if args.restore_engine_patch:
         restored = restore_colossal_engine_patch(install.game_app, install.user_data)
         output_fn(
@@ -2532,7 +2606,7 @@ def run_full_screen(args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = make_parser()
     args = parser.parse_args(argv)
-    if terminal_supports_full_screen(input, print):
+    if not args.gamecore and terminal_supports_full_screen(input, print):
         try:
             return run_full_screen(args)
         except OSError:
@@ -2543,6 +2617,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run(args)
     except (
         InstallerError,
+        gamecore.GameCoreError,
         best_mods.DownloadError,
         packer.PackError,
         ET.ParseError,

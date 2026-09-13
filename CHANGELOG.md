@@ -185,3 +185,10 @@ First official release.
 The native release artifact is architecture and macOS-version labeled. The
 wheel and source distribution remain available for other systems with Python
 3.9 or newer.
+
+## Unreleased — native GameCore products
+
+- Added verified native Lekmod/VP artifacts, one canonical stock backup, transactional
+  product switching, process-interruption recovery, status/dry-run, and cache invalidation.
+- Preserved unknown or modified binaries/content and rejected unsafe archive paths.
+- Public product downloads remain gated on validated, explicitly published releases.
