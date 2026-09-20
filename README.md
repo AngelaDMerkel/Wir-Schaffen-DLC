@@ -72,10 +72,10 @@ See the [usage guide](docs/usage.md) for automation options and detailed paths,
 the [compatibility matrix](docs/compatibility.md) for tested content, and the
 [changelog](CHANGELOG.md) for release history.
 
-Publishing a version-matched GitHub release automatically builds both native
-architectures and attaches verified downloads and checksums to that release.
-See [publishing instructions](docs/releasing.md) for the exact version pins
-and required tag format.
+Pushing to `main` or `codex/shared-macos-gamecore` automatically assigns the
+next release version, builds both native architectures, and publishes a GitHub
+release with verified downloads and checksums. No manual version bump, tag, or
+release creation is needed. See [automatic releases](docs/releasing.md).
 
 ## Development
 
