@@ -6,9 +6,9 @@ and maps into authenticated `.Civ5Pkg` DLC, installs them transactionally, and
 keeps the complete workflow inside a full-screen terminal interface.
 
 <p align="center">
-  <img src="assets/wir-schaffen-dlc-main.png" alt="The Wir Schaffen DLC main screen" width="1100" style="border-radius: 12px;">
+  <img src="assets/wir-schaffen-dlc-main.svg" alt="The Wir Schaffen DLC main menu with all four programs" width="1100" style="border-radius: 12px;">
   <br>
-  <em>The Wir Schaffen DLC main screen</em>
+  <em>The interactive main menu, rendered from the application</em>
 </p>
 
 ## Features
@@ -84,6 +84,12 @@ test suite with:
 
 ```sh
 python3 -m unittest discover -s tests -v
+```
+
+Regenerate the main-menu image directly from the application’s screen renderer:
+
+```sh
+python3 scripts/render_main_menu.py
 ```
 
 ## Project relationship

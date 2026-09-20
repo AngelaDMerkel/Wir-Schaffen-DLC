@@ -6,5 +6,6 @@ include requirements-release.txt
 include .github/release-python-version
 recursive-include .github/workflows *.yml
 recursive-include scripts *.py
+recursive-include assets *.svg
 recursive-include docs *.md
 recursive-include tests *.py
