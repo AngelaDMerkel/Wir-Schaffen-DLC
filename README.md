@@ -51,7 +51,7 @@ Download the appropriate archive from the
 [latest release](https://github.com/AngelaDMerkel/Wir-Schaffen-DLC/releases/latest):
 
 - `arm64` for Apple Silicon Macs.
-- `x86_64` for Intel Macs.
+- `amd64` (`x86_64`) for Intel Macs.
 
 Extract it, quit Civilization V, then double-click **Wir Schaffen DLC.command**.
 The release is ad-hoc signed rather than Apple-notarized, so the first launch
@@ -71,6 +71,11 @@ packages and, when required, the same native map guard.
 See the [usage guide](docs/usage.md) for automation options and detailed paths,
 the [compatibility matrix](docs/compatibility.md) for tested content, and the
 [changelog](CHANGELOG.md) for release history.
+
+Publishing a version-matched GitHub release automatically builds both native
+architectures and attaches verified downloads and checksums to that release.
+See [publishing instructions](docs/releasing.md) for the exact version pins
+and required tag format.
 
 ## Development
 

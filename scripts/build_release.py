@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import re
@@ -28,6 +29,7 @@ MACOS_MAJOR = MACOS_VERSION.split(".", 1)[0]
 RELEASE_DIR = ROOT / "release"
 WORK_DIR = ROOT / ".release-build"
 SUPPORTED_ARCHITECTURES = ("arm64", "x86_64")
+ASSET_ARCHITECTURES = {"arm64": "arm64", "x86_64": "amd64"}
 
 
 @dataclass(frozen=True)
@@ -56,7 +58,24 @@ def project_version() -> str:
     return match.group(1)
 
 
-def validate_toolchain(toolchain: Toolchain) -> None:
+def validate_release_tag(tag: str | None) -> str | None:
+    """Pin official artifacts to a matching version and the actual tagged commit."""
+    if project_version() != VERSION:
+        raise RuntimeError(f"version mismatch: pyproject.toml != {VERSION}")
+    if tag is None:
+        return None
+    if tag != f"v{VERSION}":
+        raise RuntimeError(f"release tag {tag!r} must match v{VERSION}")
+    commit = output(["git", "rev-parse", "HEAD"], cwd=ROOT)
+    tagged_commit = output(["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"], cwd=ROOT)
+    if commit != tagged_commit:
+        raise RuntimeError("checkout does not match the release tag's commit")
+    if output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT):
+        raise RuntimeError("official releases require a clean tagged checkout")
+    return commit
+
+
+def validate_toolchain(toolchain: Toolchain, official: bool = False) -> None:
     if toolchain.architecture not in SUPPORTED_ARCHITECTURES:
         raise RuntimeError(f"unsupported release architecture: {toolchain.architecture}")
     if not toolchain.python.is_file():
@@ -66,7 +85,15 @@ def validate_toolchain(toolchain: Toolchain) -> None:
         raise RuntimeError(
             f"{toolchain.python} ran as {actual}, expected {toolchain.architecture}"
         )
-    output(toolchain.command("-m", "PyInstaller", "--version"))
+    pyinstaller = output(toolchain.command("-m", "PyInstaller", "--version"))
+    if official:
+        expected_python = (ROOT / '.github/release-python-version').read_text().strip()
+        actual_python = output(toolchain.command('-c', 'import platform; print(platform.python_version())'))
+        if actual_python != expected_python:
+            raise RuntimeError(f'official release requires Python {expected_python}, got {actual_python}')
+        match = re.search(r'^pyinstaller==([^\s]+)', (ROOT / 'requirements-release.txt').read_text(), re.MULTILINE)
+        if match is None or pyinstaller != match.group(1):
+            raise RuntimeError('PyInstaller version does not match the release dependency pin')
 
 
 def verify_native_binary(binary: Path, architecture: str) -> None:
@@ -78,11 +105,13 @@ def verify_native_binary(binary: Path, architecture: str) -> None:
     version = output([str(binary), "--version"])
     if version != f"wir-schaffen-dlc {VERSION}":
         raise RuntimeError(f"standalone binary version check failed: {version}")
+    output([str(binary), "--help"])
+    output(["/usr/bin/codesign", "--verify", "--strict", str(binary)])
 
 
 def write_native_bundle(binary: Path, toolchain: Toolchain) -> tuple[Path, Path]:
     architecture = toolchain.architecture
-    label = f"Wir-Schaffen-DLC-{VERSION}-macos-{MACOS_MAJOR}-{architecture}"
+    label = f"Wir-Schaffen-DLC-{VERSION}-macos-{MACOS_MAJOR}-{ASSET_ARCHITECTURES[architecture]}"
     bundle = RELEASE_DIR / label
     bundle.mkdir()
     installed_binary = bundle / "wir-schaffen-dlc"
@@ -188,15 +217,39 @@ def build_native(toolchain: Toolchain) -> tuple[Path, Path]:
     return write_native_bundle(binary, toolchain)
 
 
-def build_python_distributions(toolchain: Toolchain) -> None:
+def build_python_distributions(toolchain: Toolchain) -> list[Path]:
     python_dist = WORK_DIR / "python-dist"
     run(
         toolchain.command(
             "-m", "build", "--no-isolation", "--outdir", str(python_dist)
         )
     )
-    for artifact in python_dist.iterdir():
-        shutil.copy2(artifact, RELEASE_DIR / artifact.name)
+    artifacts = []
+    for artifact in sorted(python_dist.iterdir()):
+        target = RELEASE_DIR / artifact.name
+        shutil.copy2(artifact, target)
+        artifacts.append(target)
+    return artifacts
+
+
+def write_build_info(toolchain: Toolchain, artifacts: Sequence[Path], tag: str | None, commit: str | None) -> Path:
+    label = ASSET_ARCHITECTURES[toolchain.architecture]
+    record = {
+        "schema_version": 1,
+        "version": VERSION,
+        "tag": tag,
+        "source_commit": commit,
+        "architecture": toolchain.architecture,
+        "asset_architecture": label,
+        "macos": MACOS_VERSION,
+        "python": output(toolchain.command("-c", "import platform; print(platform.python_version())")),
+        "pyinstaller": output(toolchain.command("-m", "PyInstaller", "--version")),
+        "build_requirements_sha256": hashlib.sha256((ROOT / "requirements-release.txt").read_bytes()).hexdigest(),
+        "artifacts": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in artifacts},
+    }
+    path = RELEASE_DIR / f"build-info-{VERSION}-{label}.json"
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 def write_checksums() -> Path:
@@ -219,9 +272,9 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--architectures",
         nargs="+",
-        choices=SUPPORTED_ARCHITECTURES,
+        choices=(*SUPPORTED_ARCHITECTURES, "amd64"),
         default=[platform.machine().lower()],
-        help="thin native binaries to build",
+        help="thin native binaries to build (amd64 is an alias for x86_64)",
     )
     parser.add_argument(
         "--arm-python",
@@ -234,22 +287,30 @@ def make_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Python with PyInstaller available under Rosetta for the x86_64 build",
     )
+    parser.add_argument("--release-tag", help="official release tag, exactly v plus the project version")
+    parser.add_argument("--check-version", action="store_true", help="verify version/tag consistency without building")
+    parser.add_argument("--skip-python-distributions", action="store_true", help="build only native artifacts (matrix companion job)")
+    parser.add_argument("--output-dir", type=Path, default=RELEASE_DIR, help="new or empty artifact directory")
+    parser.add_argument("--work-dir", type=Path, default=WORK_DIR, help="new or empty build directory")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    global RELEASE_DIR, WORK_DIR
     args = make_parser().parse_args(argv)
-    if project_version() != VERSION:
-        raise RuntimeError(f"version mismatch: pyproject.toml != {VERSION}")
+    commit = validate_release_tag(args.release_tag)
+    if args.check_version:
+        print(VERSION)
+        return 0
     if sys.platform != "darwin":
         raise RuntimeError("the native release must be built on macOS")
     if not MACOS_MAJOR:
         raise RuntimeError("could not determine the macOS release")
 
-    requested = list(dict.fromkeys(args.architectures))
+    requested = list(dict.fromkeys("x86_64" if arch == "amd64" else arch for arch in args.architectures))
     python_by_architecture = {
         "arm64": args.arm_python,
-        "x86_64": args.x86_python,
+        "x86_64": args.x86_python or (Path(sys.executable) if platform.machine() == "x86_64" else None),
     }
     toolchains: list[Toolchain] = []
     for architecture in requested:
@@ -260,16 +321,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         # interpreter discards pyvenv.cfg and its installed build tools.
         python_path = Path(os.path.abspath(python.expanduser()))
         toolchain = Toolchain(architecture, python_path)
-        validate_toolchain(toolchain)
+        validate_toolchain(toolchain, official=args.release_tag is not None)
         toolchains.append(toolchain)
 
-    shutil.rmtree(WORK_DIR, ignore_errors=True)
-    shutil.rmtree(RELEASE_DIR, ignore_errors=True)
-    WORK_DIR.mkdir()
-    RELEASE_DIR.mkdir()
+    WORK_DIR = args.work_dir.expanduser().absolute()
+    RELEASE_DIR = args.output_dir.expanduser().absolute()
+    if WORK_DIR == RELEASE_DIR or WORK_DIR in RELEASE_DIR.parents or RELEASE_DIR in WORK_DIR.parents:
+        raise RuntimeError("work and artifact directories must be separate")
+    for directory in (WORK_DIR, RELEASE_DIR):
+        if directory.exists() and (not directory.is_dir() or any(directory.iterdir())):
+            raise RuntimeError(f"refusing to erase existing output; choose a new or empty directory: {directory}")
+        directory.mkdir(parents=True, exist_ok=True)
 
-    build_python_distributions(toolchains[0])
-    native_artifacts = [build_native(toolchain) for toolchain in toolchains]
+    python_artifacts = [] if args.skip_python_distributions else build_python_distributions(toolchains[0])
+    native_artifacts = []
+    for index, toolchain in enumerate(toolchains):
+        bundle, archive = build_native(toolchain)
+        native_artifacts.append((bundle, archive))
+        write_build_info(toolchain, [archive, *(python_artifacts if index == 0 else [])], args.release_tag, commit)
     checksums = write_checksums()
 
     print(f"\nBuilt release {VERSION}:")

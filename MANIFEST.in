@@ -2,5 +2,9 @@ include CHANGELOG.md
 include LICENSE
 include NOTICE
 include wir-schaffen-dlc.command
+include requirements-release.txt
+include .github/release-python-version
+recursive-include .github/workflows *.yml
+recursive-include scripts *.py
 recursive-include docs *.md
 recursive-include tests *.py
