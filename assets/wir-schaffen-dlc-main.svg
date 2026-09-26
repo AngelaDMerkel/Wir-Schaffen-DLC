@@ -88,7 +88,7 @@
 <text x="580" y="391" fill="#56617f" font-weight="400" textLength="30" lengthAdjust="spacingAndGlyphs">mod</text>
 <text x="620" y="391" fill="#56617f" font-weight="400" textLength="90" lengthAdjust="spacingAndGlyphs">installer</text>
 <text x="720" y="391" fill="#56617f" font-weight="400" textLength="10" lengthAdjust="spacingAndGlyphs">·</text>
-<text x="740" y="391" fill="#56617f" font-weight="400" textLength="60" lengthAdjust="spacingAndGlyphs">v1.0.7</text>
+<text x="740" y="391" fill="#56617f" font-weight="400" textLength="60" lengthAdjust="spacingAndGlyphs">v1.0.8</text>
 <text x="120" y="435" fill="#1f263c" font-weight="700" textLength="60" lengthAdjust="spacingAndGlyphs">SELECT</text>
 <text x="190" y="435" fill="#1f263c" font-weight="700" textLength="70" lengthAdjust="spacingAndGlyphs">PROGRAM</text>
 <rect x="120" y="462" width="880" height="22" fill="#ffdd45"/>
