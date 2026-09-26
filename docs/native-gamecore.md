@@ -78,7 +78,11 @@ adds its fixed `@executable_path` dependency in unused Mach-O header space and
 ad-hoc signs a staged executable. The supported original executable must match
 the pinned full SHA-256. No instruction or section is relocated. Steam's Play
 button then uses the installed correction without launch options or a separate
-launcher. Native Steam launch validation is pending for this local implementation.
+launcher. On the current M2 Max/macOS26.5.2 test machine, actual Steam Play and
+Aspyr Play reached the menu, loaded an existing Lekmod single-player save and
+exited normally with code0, without test UI hooks or injected process libraries.
+Evidence is recorded in Lekmod's `docs/macos-host-stat-abi.md` and ignored
+`build/macos/steam-play-20260926/`. This is one pinned host/package validation.
 
 The original executable is preserved as `stock-executable` alongside the existing
 `stock.dylib`. State records original/installed executable and correction-library
