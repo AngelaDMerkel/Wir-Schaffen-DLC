@@ -30,7 +30,7 @@ REALLY_ADVANCED_SETUP_ID = "34feb829-33fb-4241-956f-462e6877e070"
 MASS_EFFECT_ID = "1a7a5b30-1e1a-4c3d-aff2-7588494f514d"
 PACKER_NAMESPACE = uuid.UUID("07186f1e-bfdd-45db-8c1d-f9679e727249")
 SUPPORTED_ACTION = "UpdateDatabase"
-VERSION = "1.0.8"
+VERSION = "1.0.10"
 CIV5_MAP_MAX_PLOTS = 32768
 CIV5_MAP_HEADER_BYTES = 42
 # Civ V mixes this fixed 16-byte seed with the protected package fields and
