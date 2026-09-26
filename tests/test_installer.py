@@ -69,7 +69,7 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("ANGELADMERKEL'S:", banner)
         self.assertIn(" __      _____ ___", banner)
         self.assertIn("  ___  ___ _  _   _   ___ ___ ___ _  _", banner)
-        self.assertIn("Fine, I'll do it for you.", banner)
+        self.assertIn("Nothing puts the I in team like me", banner)
         self.assertIn(f"installer · v{INSTALLER.packer.VERSION}", banner)
         self.assertIn("|___/|____\\___|", banner)
         self.assertNotIn("\033", banner)

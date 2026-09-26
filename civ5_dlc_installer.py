@@ -38,6 +38,7 @@ GAME_APP_NAME = "Civilization V.app"
 GAME_STEAM_PATH = Path("steamapps/common/Sid Meier's Civilization V") / GAME_APP_NAME
 USER_DATA_PATH = Path("Library/Application Support/Sid Meier's Civilization 5")
 BRAND_NAME = "AngelaDMerkel's: Wir Schaffen DLC"
+BRAND_TAGLINE = "Nothing puts the I in team like me"
 SHARED_UI_BRIDGE_ID = str(uuid.uuid5(packer.PACKER_NAMESPACE, "wir-schaffen-dlc:shared-ui-bridge"))
 EXCOGITARE_PATCH_ID = str(
     uuid.uuid5(packer.PACKER_NAMESPACE, "wir-schaffen-dlc:excogitare-map-patch")
@@ -322,7 +323,7 @@ def terminal_banner(color: bool = False) -> str:
             wordmark.append(f"{title}{bold}{yellow}{centered}{reset}")
         else:
             wordmark.append(f"{yellow}{centered}{reset}")
-    tagline = centered_terminal_line("Fine, I'll do it for you.", width)
+    tagline = centered_terminal_line(BRAND_TAGLINE, width)
     subtitle = centered_terminal_line(
         f"Civilization V multiplayer mod installer · v{packer.VERSION}", width
     )
@@ -520,7 +521,7 @@ def compact_terminal_banner(color: bool = False) -> str:
     yellow = TUI_YELLOW if color else ""
     dim = TUI_MUTED if color else ""
     width = terminal_canvas_width()
-    tagline = centered_terminal_line("Fine, I'll do it for you.", width)
+    tagline = centered_terminal_line(BRAND_TAGLINE, width)
     version = centered_terminal_line(f"v{packer.VERSION}", width)
     return "\n".join(
         (
@@ -808,7 +809,7 @@ class FullScreenTerminalUI:
         selected_foreground = TUI_SELECTED_FOREGROUND if self.color else ""
         selected_background = TUI_YELLOW_BACKGROUND if self.color else ""
         title = centered_terminal_line(f"{BRAND_NAME} · v{packer.VERSION}", width)
-        tagline = centered_terminal_line("Fine, I'll do it for you.", width)
+        tagline = centered_terminal_line(BRAND_TAGLINE, width)
         program_line = terminal_columns(self.program, self.status, width).ljust(width)
         rows = [
             f"{left_padding}{bold}{yellow}{title}{reset}",

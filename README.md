@@ -1,5 +1,7 @@
 # Wir Schaffen DLC
 
+*Nothing puts the I in team like me*
+
 Wir Schaffen DLC is a macOS utility for using Civilization V mods in ordinary
 single-player and multiplayer sessions. It converts supported ModBuddy mods
 and maps into authenticated `.Civ5Pkg` DLC, installs them transactionally, and
