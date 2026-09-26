@@ -87,11 +87,17 @@ class AutomaticReleaseTests(unittest.TestCase):
         directory = self.base / 'assets'
         directory.mkdir(exist_ok=True)
         artifacts = {}
+        public_assets = []
         for arch in ('arm64', 'amd64'):
             path = directory / f'Wir-Schaffen-DLC-{plan["version"]}-macos-15-{arch}.zip'
             path.write_bytes((arch + ' synthetic fixture').encode())
             artifacts[path.name] = {'sha256': AUTO.sha256(path)}
-        manifest = {'tag': plan['tag'], 'version': plan['version'], 'source_commit': plan['release_commit'], 'artifacts': artifacts}
+            public_assets.append(path.name)
+            info = directory / f'build-info-{plan["version"]}-{arch}.json'
+            info.write_text(json.dumps({'architecture': arch, 'source_commit': plan['release_commit']}))
+            artifacts[info.name] = {'sha256': AUTO.sha256(info)}
+        manifest = {'tag': plan['tag'], 'version': plan['version'], 'source_commit': plan['release_commit'],
+                    'artifacts': artifacts, 'public_assets': public_assets}
         (directory / 'release-manifest.json').write_text(json.dumps(manifest))
         (directory / 'SHA256SUMS.txt').write_text(''.join(f'{AUTO.sha256(p)}  {p.name}\n' for p in sorted(directory.iterdir()) if p.name != 'SHA256SUMS.txt'))
         return directory
@@ -158,6 +164,12 @@ class AutomaticReleaseTests(unittest.TestCase):
         self.assertEqual(github.calls, ['draft', 'upload', ('publish', True)])
         self.assertFalse(result['draft'])
         self.assertTrue(result['immutable'])
+        self.assertEqual({asset['name'] for asset in result['assets']}, {
+            f'Wir-Schaffen-DLC-{plan["version"]}-macos-15-arm64.zip',
+            f'Wir-Schaffen-DLC-{plan["version"]}-macos-15-amd64.zip',
+        })
+        self.assertNotIn('SHA256SUMS.txt', result['body'])
+        self.assertNotIn('release-manifest.json', result['body'])
         self.assertIn('refs/tags/v1.0.1', self.git('ls-remote', 'origin', 'refs/tags/v1.0.1'))
         self.assertIn(self.source, self.git('ls-remote', 'origin', 'refs/heads/main'))
 
@@ -204,6 +216,38 @@ class AutomaticReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
             AUTO.publish_release(self.repo, plan, assets, github)
         self.assertEqual(self.git('ls-remote', 'origin', 'refs/tags/v1.0.1'), '')
+
+    def test_internal_build_records_are_still_verified_before_publication(self):
+        plan = self.plan()
+        assets, github = self.assets(plan), FakeGitHub()
+        next(assets.glob('build-info-*.json')).write_bytes(b'corrupt build metadata')
+        with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+            AUTO.publish_release(self.repo, plan, assets, github)
+        self.assertEqual(github.calls, [])
+
+    def test_metadata_cannot_be_added_to_the_public_download_list(self):
+        plan = self.plan()
+        assets, github = self.assets(plan), FakeGitHub()
+        path = assets / 'release-manifest.json'
+        manifest = json.loads(path.read_text())
+        manifest['public_assets'].append(next(assets.glob('build-info-*.json')).name)
+        path.write_text(json.dumps(manifest))
+        (assets / 'SHA256SUMS.txt').write_text(''.join(f'{AUTO.sha256(p)}  {p.name}\n' for p in sorted(assets.iterdir()) if p.name != 'SHA256SUMS.txt'))
+        with self.assertRaisesRegex(ValueError, 'exactly two executable bundles'):
+            AUTO.publish_release(self.repo, plan, assets, github)
+        self.assertEqual(github.calls, [])
+
+    def test_duplicate_architecture_cannot_replace_the_other_bundle(self):
+        plan = self.plan()
+        assets, github = self.assets(plan), FakeGitHub()
+        path = assets / 'release-manifest.json'
+        manifest = json.loads(path.read_text())
+        manifest['public_assets'] = [manifest['public_assets'][0]] * 2
+        path.write_text(json.dumps(manifest))
+        (assets / 'SHA256SUMS.txt').write_text(''.join(f'{AUTO.sha256(p)}  {p.name}\n' for p in sorted(assets.iterdir()) if p.name != 'SHA256SUMS.txt'))
+        with self.assertRaisesRegex(ValueError, 'exactly two executable bundles'):
+            AUTO.publish_release(self.repo, plan, assets, github)
+        self.assertEqual(github.calls, [])
 
     def test_retry_of_older_run_does_not_displace_newer_latest_release(self):
         older = self.plan()

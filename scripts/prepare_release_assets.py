@@ -31,6 +31,7 @@ def prepare(directory: Path, tag: str, commit: str, repository: str) -> dict:
         raise ValueError('missing PyInstaller release pin')
     expected_files: set[str] = set()
     all_artifacts: dict[str, str] = {}
+    public_assets: list[str] = []
     toolchains = []
     lock_digest = None
     for architecture, label in (("arm64", "arm64"), ("x86_64", "amd64")):
@@ -63,9 +64,8 @@ def prepare(directory: Path, tag: str, commit: str, repository: str) -> dict:
                 raise ValueError("duplicate artifact across architecture jobs")
             if re.fullmatch(rf"Wir-Schaffen-DLC-{re.escape(version)}-macos-[0-9]+-{label}\.zip", filename):
                 native_archives += 1
-            elif not (label == 'arm64' and filename in {
-                f"civ5_mod_dlc_packer-{version}-py3-none-any.whl", f"civ5_mod_dlc_packer-{version}.tar.gz"
-            }):
+                public_assets.append(filename)
+            else:
                 raise ValueError(f"unexpected artifact for {label}: {filename}")
             artifact = directory / filename
             if not artifact.is_file() or artifact.is_symlink() or digest(artifact) != expected_hash:
@@ -77,16 +77,14 @@ def prepare(directory: Path, tag: str, commit: str, repository: str) -> dict:
         expected_files.add(name)
         all_artifacts[name] = digest(path)
         toolchains.append({key: record[key] for key in ("architecture", "python", "pyinstaller", "macos")})
-    python_files = {f"civ5_mod_dlc_packer-{version}-py3-none-any.whl", f"civ5_mod_dlc_packer-{version}.tar.gz"}
-    if not python_files <= expected_files:
-        raise ValueError("missing Python source/wheel artifacts")
     if {path.name for path in directory.iterdir()} != expected_files:
         raise ValueError("unexpected files in the combined release assets")
     base = f"https://github.com/{repository}/releases/download/{quote(tag, safe='')}"
     manifest = {
         "schema_version": 1, "version": version, "tag": tag, "source_commit": commit,
         "build_requirements_sha256": lock_digest, "toolchains": toolchains,
-        "artifacts": {name: {"sha256": sha, "url": f"{base}/{quote(name, safe='')}"}
+        "public_assets": sorted(public_assets),
+        "artifacts": {name: {"sha256": sha, **({"url": f"{base}/{quote(name, safe='')}"} if name in public_assets else {})}
                       for name, sha in sorted(all_artifacts.items())},
     }
     manifest_path = directory / 'release-manifest.json'

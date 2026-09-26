@@ -86,8 +86,6 @@ class ReleaseAssemblyTests(unittest.TestCase):
         self.commit = 'a' * 40
         for architecture, label in [('arm64', 'arm64'), ('x86_64', 'amd64')]:
             names = [f'Wir-Schaffen-DLC-{self.version}-macos-15-{label}.zip']
-            if label == 'arm64':
-                names += [f'civ5_mod_dlc_packer-{self.version}-py3-none-any.whl', f'civ5_mod_dlc_packer-{self.version}.tar.gz']
             artifacts = {}
             for name in names:
                 (self.root / name).write_bytes(name.encode())
@@ -111,11 +109,18 @@ class ReleaseAssemblyTests(unittest.TestCase):
 
     def test_both_architectures_get_one_pinned_manifest_and_checksum_inventory(self):
         manifest = self.prepare()
-        self.assertEqual(len(manifest['artifacts']), 6)
+        self.assertEqual(len(manifest['artifacts']), 4)
+        self.assertEqual(set(manifest['public_assets']), {
+            f'Wir-Schaffen-DLC-{self.version}-macos-15-arm64.zip',
+            f'Wir-Schaffen-DLC-{self.version}-macos-15-amd64.zip',
+        })
         self.assertEqual(manifest['source_commit'], self.commit)
         for name, record in manifest['artifacts'].items():
             self.assertEqual(record['sha256'], ASSETS.digest(self.root / name))
-            self.assertIn('/releases/download/v1.2.3/', record['url'])
+            if name in manifest['public_assets']:
+                self.assertIn('/releases/download/v1.2.3/', record['url'])
+            else:
+                self.assertNotIn('url', record)
         sums = dict(line.split('  ', 1)[::-1] for line in (self.root / 'SHA256SUMS.txt').read_text().splitlines())
         self.assertEqual(set(sums), {path.name for path in self.root.iterdir()} - {'SHA256SUMS.txt'})
         for name, sha in sums.items():
@@ -155,6 +160,16 @@ class ReleaseAssemblyTests(unittest.TestCase):
     def test_unlisted_assets_are_rejected(self):
         (self.root / 'unverified.zip').write_bytes(b'extra')
         with self.assertRaisesRegex(ValueError, 'unexpected files'):
+            self.prepare()
+
+    def test_python_distributions_are_rejected_even_when_listed_by_a_build(self):
+        path = self.root / f'civ5_mod_dlc_packer-{self.version}-py3-none-any.whl'
+        path.write_bytes(b'not a public native bundle')
+        metadata = self.root / f'build-info-{self.version}-arm64.json'
+        record = json.loads(metadata.read_text())
+        record['artifacts'][path.name] = ASSETS.digest(path)
+        metadata.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, 'unexpected artifact'):
             self.prepare()
 
     def test_symbolic_link_assets_are_rejected(self):

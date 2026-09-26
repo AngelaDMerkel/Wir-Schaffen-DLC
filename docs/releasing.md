@@ -39,7 +39,8 @@ The tagged source and its binaries always contain the actual release version.
 2. Build and test on native `macos-15` arm64 and `macos-15-intel` x86_64 runners.
 3. Verify both binaries, versions, signatures, manifests, and SHA-256 hashes.
 4. Push the exact release tag and create a draft release.
-5. Upload all assets and verify GitHub's reported sizes and SHA-256 digests.
+5. Upload the two executable bundles and verify GitHub's reported sizes and
+   SHA-256 digests.
 6. Publish the completed draft and show the new release in GitHub's Releases
    section. It becomes Latest unless it is a retry of an older run superseded
    by a newer automatic release.
@@ -48,14 +49,22 @@ This draft-first flow also supports GitHub's immutable releases: assets are
 complete before publication seals the release. Failed builds create no public
 release. Upload failures leave a recoverable workflow-owned draft.
 
-Each release contains:
+Each release uploads only:
 
 - `Wir-Schaffen-DLC-VERSION-macos-15-arm64.zip` for Apple Silicon;
-- `Wir-Schaffen-DLC-VERSION-macos-15-amd64.zip` for Intel (`x86_64`);
-- a Python wheel and source distribution;
-- per-architecture build-information JSON;
-- `release-manifest.json` with the exact release commit and version-pinned URLs;
-- `SHA256SUMS.txt` for all payloads and release metadata.
+- `Wir-Schaffen-DLC-VERSION-macos-15-amd64.zip` for Intel (`x86_64`).
+
+Each ZIP includes the standalone installer and its double-clickable launcher.
+The automatic workflow does not build or upload Python wheels or source
+distributions. GitHub also displays its own
+[source-code archive links](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
+for the release tag.
+
+Per-architecture build-information JSON, `release-manifest.json` (including
+the exact release commit and version-pinned download URLs), and `SHA256SUMS.txt`
+are retained for 30 days in the workflow's `release-verification` artifact.
+All build records and checksums are verified before publication; they are not
+uploaded to the public release.
 
 The macOS number identifies the build OS, not the oldest supported OS. Each
 native build runs the test suite, checks Mach-O architecture, runs `--version`
@@ -95,10 +104,11 @@ Local development builds still work without creating a release:
 ```sh
 python3 -m venv /private/tmp/wsdlc-build-env
 /private/tmp/wsdlc-build-env/bin/python -m pip install --require-hashes -r requirements-release.txt
-/private/tmp/wsdlc-build-env/bin/python scripts/build_release.py --architectures arm64 --output-dir /private/tmp/wsdlc-artifacts --work-dir /private/tmp/wsdlc-build-work
+/private/tmp/wsdlc-build-env/bin/python scripts/build_release.py --architectures arm64 --skip-python-distributions --output-dir /private/tmp/wsdlc-artifacts --work-dir /private/tmp/wsdlc-build-work
 ```
 
 For Intel use `--architectures amd64 --x86-python /path/to/intel/python`.
+Omit `--skip-python-distributions` when you also need developer Python packages.
 `x86_64` remains accepted as an alias. Output and work directories must be new
 or empty; existing artifacts are preserved. Official builds use the generated
 tagged checkout and the pinned Python/PyInstaller versions. Local untagged

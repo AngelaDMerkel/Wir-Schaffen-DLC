@@ -224,9 +224,9 @@ def publish_release(root: Path, plan: dict, directory: Path, github: GitHub) -> 
     manifest = json.loads((directory / 'release-manifest.json').read_text())
     if manifest.get('tag') != plan['tag'] or manifest.get('version') != plan['version'] or manifest.get('source_commit') != plan['release_commit']:
         raise ValueError('release assets do not match the planned source/version')
-    assets = sorted(directory.iterdir())
+    files = sorted(directory.iterdir())
     expected = set(manifest['artifacts']) | {'release-manifest.json', 'SHA256SUMS.txt'}
-    if {path.name for path in assets} != expected or any(path.is_symlink() or not path.is_file() for path in assets):
+    if {path.name for path in files} != expected or any(path.is_symlink() or not path.is_file() for path in files):
         raise ValueError('unexpected release asset inventory')
     checksums = {}
     for line in (directory / 'SHA256SUMS.txt').read_text().splitlines():
@@ -239,27 +239,38 @@ def publish_release(root: Path, plan: dict, directory: Path, github: GitHub) -> 
     for name, record in manifest['artifacts'].items():
         if record['sha256'] != checksums[name]:
             raise ValueError('release manifest checksum mismatch')
+    public = manifest.get('public_assets')
+    if (not isinstance(public, list) or len(public) != 2 or any(not isinstance(name, str) for name in public)
+            or len(set(public)) != 2 or not set(public) <= set(manifest['artifacts'])):
+        raise ValueError('release must declare exactly two executable bundles')
+    for architecture in ('arm64', 'amd64'):
+        pattern = rf'Wir-Schaffen-DLC-{re.escape(plan["version"])}-macos-[0-9]+-{architecture}\.zip'
+        if sum(bool(re.fullmatch(pattern, name)) for name in public) != 1:
+            raise ValueError('release must declare exactly two executable bundles: arm64 and amd64')
+    assets = [directory / name for name in sorted(public)]
+    expected_public = set(public)
     marker = release_marker(plan)
     release = github.find_release(plan['tag'])
     if release and marker not in (release.get('body') or ''):
         raise ValueError('refusing to modify a release owned by another run or user')
     if release and not release['draft']:
-        if not expected <= {asset['name'] for asset in release['assets'] if asset['state'] == 'uploaded'}:
+        if not expected_public <= {asset['name'] for asset in release['assets'] if asset['state'] == 'uploaded'}:
             raise ValueError('published release is missing assets; existing bytes will not be overwritten')
         return release
     # Never force-push a tag. A competing reservation must fail safely.
     git(root, 'push', 'origin', f'refs/tags/{plan["tag"]}:refs/tags/{plan["tag"]}')
     if release is None:
         body = (f'Automatic macOS release for source commit `{plan["source_commit"]}`.\n\n'
-                'Both arm64 and amd64 builds passed tests, version, architecture, and signature checks. '
-                'Download the matching ZIP; SHA256SUMS.txt and release-manifest.json record the exact bytes.\n\n' + marker)
+                'Download **arm64** for Apple Silicon or **amd64** for Intel. '
+                'Each ZIP includes the standalone installer and its double-clickable launcher.\n\n'
+                'Both builds passed tests, version, architecture, signature, and checksum checks.\n\n' + marker)
         release = github.create_draft(plan, body)
     if not release['draft'] or release.get('immutable') or marker not in (release.get('body') or ''):
         raise ValueError('assets may only be uploaded to this run\'s mutable draft')
     github.upload(plan['tag'], assets)
     release = github.get_release(release['id'])
     uploaded = {asset['name']: asset for asset in release['assets']}
-    if set(uploaded) != expected:
+    if set(uploaded) != expected_public:
         raise ValueError('GitHub draft does not contain the complete verified asset set')
     for asset in assets:
         remote = uploaded[asset.name]
