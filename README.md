@@ -62,6 +62,9 @@ may require Control-clicking the command and choosing **Open**.
 From a repository checkout, run:
 
 ```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install .
 ./wir-schaffen-dlc.command
 ```
 
@@ -83,8 +86,8 @@ and main-menu image update automatically to match. See
 
 ## Development
 
-Python 3.9 or newer is sufficient for the packer and installer source. Run the
-test suite with:
+Use Python 3.9 or newer and install the project in a virtual environment as
+shown above. Run the test suite with:
 
 ```sh
 python3 -m unittest discover -s tests -v

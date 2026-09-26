@@ -8,6 +8,7 @@ version = "1.0.8"
 description = "Convert Civilization V ModBuddy mods into multiplayer-loadable DLC packages"
 readme = "README.md"
 requires-python = ">=3.9"
+dependencies = ["certifi==2026.7.22"]
 license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Civ5 Mod DLC Packer contributors" }]
@@ -24,4 +25,4 @@ civ5-dlc-packer = "civ5_dlc_packer:main"
 wir-schaffen-dlc = "civ5_dlc_installer:main"
 
 [tool.setuptools]
-py-modules = ["civ5_dlc_packer", "civ5_dlc_installer", "civ5_best_mods", "civ5_gamecore", "civ5_host_startup"]
+py-modules = ["civ5_dlc_packer", "civ5_dlc_installer", "civ5_best_mods", "civ5_gamecore", "civ5_host_startup", "civ5_network"]

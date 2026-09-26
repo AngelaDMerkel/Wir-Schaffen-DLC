@@ -18,9 +18,9 @@ import subprocess
 import tempfile
 import uuid
 from urllib.parse import urlparse
-from urllib.request import urlopen
 import zipfile
 
+from civ5_network import urlopen
 import civ5_host_startup as startup
 
 BINARY = 'libCvGameCoreDLL_Expansion2_DLL.dylib'

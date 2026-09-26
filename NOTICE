@@ -7,6 +7,12 @@ MPPatch and this packer use different architectures. MPPatch provided useful
 reference material for Civilization V DLC package structure and UI skin
 behavior. MPPatch is distributed under the MIT License.
 
+Standalone builds include certifi's Mozilla root certificate bundle for HTTPS
+verification. certifi is distributed under the Mozilla Public License 2.0;
+its license is included as LICENSE-certifi.txt in each native bundle.
+
+https://github.com/certifi/python-certifi
+
 Civilization V and ModBuddy are trademarks of their respective owners. This
 project is unofficial and is not affiliated with or endorsed by Firaxis Games,
 2K, Aspyr, or Valve.

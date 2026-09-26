@@ -2216,6 +2216,8 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--game-app", type=Path, help="path to Civilization V.app")
     parser.add_argument("--user-data", type=Path, help="path containing the MODS and cache directories")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--check-downloads', action='store_true',
+                      help='verify HTTPS access and the curated Workshop metadata without installing anything')
     mode.add_argument('--gamecore', choices=('status', 'stock', 'lekmod', 'vox-populi', 'recover'),
                       help='inspect, restore, install/update/switch, or recover native GameCore products')
     parser.add_argument('--gamecore-package', type=Path, help='local native release ZIP (requires its independently recorded SHA-256)')
@@ -2317,6 +2319,12 @@ def run(
     output_fn: Callable[[str], None] = print,
     terminal_ui: FullScreenTerminalUI | None = None,
 ) -> int:
+    if getattr(args, 'check_downloads', False):
+        items = best_mods.fetch_workshop_files()
+        output_fn(f'Verified {len(items)} Civilization V Workshop items over HTTPS.')
+        for item in items:
+            output_fn(f'  {item.source.title} v{item.source.manifest_version} — Workshop {item.source.published_file_id}')
+        return 0
     use_color = terminal_supports_color() and output_fn is print
     if terminal_ui is None:
         output_fn(terminal_banner(color=use_color))
@@ -2420,10 +2428,6 @@ def run(
         output_fn(f"\nSelected exclusive collection: {best_mods.PRESET_NAME}")
         for source in best_mods.SOURCES:
             output_fn(f"  • {source.title}")
-        output_fn(
-            "  ! The supplied Workable Mountains link targets Civilization VI; "
-            "the preset uses the author's Civ V Workshop item 233614126."
-        )
 
     output_fn("\nQuit Civilization V before continuing.")
     needs_engine_patch = False
@@ -2607,7 +2611,7 @@ def run_full_screen(args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = make_parser()
     args = parser.parse_args(argv)
-    if not args.gamecore and terminal_supports_full_screen(input, print):
+    if not args.gamecore and not args.check_downloads and terminal_supports_full_screen(input, print):
         try:
             return run_full_screen(args)
         except OSError:

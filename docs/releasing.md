@@ -77,9 +77,15 @@ uploaded to the public release.
 
 The macOS number identifies the build OS, not the oldest supported OS. Each
 native build runs the test suite, checks Mach-O architecture, runs `--version`
-and `--help`, and verifies the ad-hoc signature. Python is pinned in
+and `--help`, and verifies the ad-hoc signature. It also runs `--check-downloads`
+with external OpenSSL CA paths disabled, verifying access to Valve's Workshop
+API from the frozen executable using its bundled certificates. Python is pinned in
 `.github/release-python-version`; dependencies and wheel hashes are pinned in
 `requirements-release.txt`. Actions use full commit pins.
+
+The release environment pins certifi and its wheel hash. PyInstaller includes
+the CA bundle, and HTTPS requests keep certificate and hostname verification
+enabled. The certifi license is included in each executable bundle.
 
 ## Queuing and retry behavior
 

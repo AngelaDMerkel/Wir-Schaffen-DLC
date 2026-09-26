@@ -75,6 +75,25 @@ class InstallerTests(unittest.TestCase):
         self.assertNotIn("\033", banner)
         self.assertLessEqual(max(map(len, banner.splitlines())), 88)
 
+    def test_download_check_does_not_discover_or_modify_a_game_installation(self):
+        source = next(source for source in INSTALLER.best_mods.SOURCES if source.published_file_id == '233614126')
+        item = mock.Mock(source=source)
+        output = []
+        args = INSTALLER.make_parser().parse_args(['--check-downloads'])
+        with mock.patch.object(INSTALLER.best_mods, 'fetch_workshop_files', return_value=[item]), \
+                mock.patch.object(INSTALLER, 'discover_game_apps', side_effect=AssertionError('must not inspect game')), \
+                mock.patch.object(INSTALLER, 'discover_user_data_dirs', side_effect=AssertionError('must not inspect user data')):
+            self.assertEqual(INSTALLER.run(args, output_fn=output.append), 0)
+        self.assertIn('Verified 1 Civilization V Workshop items over HTTPS.', output)
+        self.assertIn('Workable Mountains v2', '\n'.join(output))
+
+    def test_download_check_bypasses_interactive_terminal_mode(self):
+        with mock.patch.object(INSTALLER, 'terminal_supports_full_screen', return_value=True), \
+                mock.patch.object(INSTALLER, 'run_full_screen', side_effect=AssertionError('must not open UI')), \
+                mock.patch.object(INSTALLER, 'run', return_value=0) as run:
+            self.assertEqual(INSTALLER.main(['--check-downloads']), 0)
+        self.assertTrue(run.call_args.args[0].check_downloads)
+
     def test_brand_banner_and_menu_use_ansi_only_when_requested(self):
         self.assertIn("\033[", INSTALLER.terminal_banner(color=True))
         self.assertIn("\033[", INSTALLER.installation_mode_menu(color=True))

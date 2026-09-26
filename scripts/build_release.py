@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,6 +95,10 @@ def validate_toolchain(toolchain: Toolchain, official: bool = False) -> None:
         match = re.search(r'^pyinstaller==([^\s]+)', (ROOT / 'requirements-release.txt').read_text(), re.MULTILINE)
         if match is None or pyinstaller != match.group(1):
             raise RuntimeError('PyInstaller version does not match the release dependency pin')
+        certificate_pin = re.search(r'^certifi==([^\s]+)', (ROOT / 'requirements-release.txt').read_text(), re.MULTILINE)
+        certificate_version = output(toolchain.command('-c', 'import certifi; print(certifi.__version__)'))
+        if certificate_pin is None or certificate_version != certificate_pin.group(1):
+            raise RuntimeError('certificate bundle version does not match the release dependency pin')
 
 
 def verify_native_binary(binary: Path, architecture: str) -> None:
@@ -107,6 +112,16 @@ def verify_native_binary(binary: Path, architecture: str) -> None:
         raise RuntimeError(f"standalone binary version check failed: {version}")
     output([str(binary), "--help"])
     output(["/usr/bin/codesign", "--verify", "--strict", str(binary)])
+    with tempfile.TemporaryDirectory(prefix='wsdlc-no-system-ca-') as temporary:
+        # Prove the frozen binary carries its own trusted roots. The build
+        # machine's OpenSSL certificate paths must not make this check pass.
+        environment = os.environ | {
+            'SSL_CERT_FILE': str(Path(temporary) / 'missing.pem'),
+            'SSL_CERT_DIR': temporary,
+        }
+        result = subprocess.check_output([str(binary), '--check-downloads'], env=environment,
+                                         text=True, timeout=60)
+        print(result.strip(), flush=True)
 
 
 def write_native_bundle(binary: Path, toolchain: Toolchain) -> tuple[Path, Path]:
@@ -127,6 +142,10 @@ def write_native_bundle(binary: Path, toolchain: Toolchain) -> tuple[Path, Path]
     launcher.chmod(0o755)
     shutil.copy2(ROOT / "LICENSE", bundle / "LICENSE")
     shutil.copy2(ROOT / "NOTICE", bundle / "NOTICE")
+    certificate_license = output(toolchain.command(
+        '-c', "from importlib.metadata import distribution; d=distribution('certifi'); "
+        "print(next(d.locate_file(p) for p in d.files if p.name == 'LICENSE').read_text())"))
+    (bundle / 'LICENSE-certifi.txt').write_text(certificate_license + '\n', encoding='utf-8')
     shutil.copy2(ROOT / "CHANGELOG.md", bundle / "CHANGELOG.md")
 
     pyinstaller_version = output(toolchain.command("-m", "PyInstaller", "--version"))
@@ -198,6 +217,8 @@ def build_native(toolchain: Toolchain) -> tuple[Path, Path]:
             "--noconfirm",
             "--onefile",
             "--noupx",
+            "--collect-data",
+            "certifi",
             "--target-architecture",
             architecture,
             "--name",

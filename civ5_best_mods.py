@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Sequence
 
+from civ5_network import urlopen
+
 
 PRESET_ID = "angela-d-merkel-very-best-mods-v1"
 PRESET_NAME = "AngelaDMerkel's Very Best Mods"
@@ -158,7 +160,7 @@ def _read_response(response: object, limit: int) -> bytes:
 
 def fetch_workshop_files(
     sources: Sequence[CuratedSource] = SOURCES,
-    opener: Callable[..., object] = urllib.request.urlopen,
+    opener: Callable[..., object] = urlopen,
     timeout: float = 30,
 ) -> list[WorkshopFile]:
     fields: list[tuple[str, str]] = [("itemcount", str(len(sources)))]
@@ -237,7 +239,7 @@ def fetch_workshop_files(
 def download_archive(
     item: WorkshopFile,
     destination: Path,
-    opener: Callable[..., object] = urllib.request.urlopen,
+    opener: Callable[..., object] = urlopen,
     timeout: float = 120,
     progress_fn: Callable[[int, int, float | None], None] | None = None,
 ) -> tuple[str, int]:
@@ -377,7 +379,7 @@ def validate_manifest(source: CuratedSource, mod_dir: Path) -> None:
 def download_preset(
     destination: Path,
     output_fn: Callable[[str], None] = print,
-    opener: Callable[..., object] = urllib.request.urlopen,
+    opener: Callable[..., object] = urlopen,
     tar_command: str | None = None,
     progress_fn: Callable[[DownloadProgress], None] | None = None,
 ) -> list[DownloadedMod]:
