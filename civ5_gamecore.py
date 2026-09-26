@@ -21,6 +21,8 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 import zipfile
 
+import civ5_host_startup as startup
+
 BINARY = 'libCvGameCoreDLL_Expansion2_DLL.dylib'
 BINARY_RELATIVE = 'Contents/MacOS/' + BINARY
 DLC_RELATIVE = 'Contents/Assets/Assets/DLC'
@@ -113,6 +115,14 @@ def verify_package(directory: Path, catalog: dict = CATALOG) -> dict:
             raise GameCoreError('missing product version')
         payload_name = expected['payload']
         destinations = {'gamecore': BINARY_RELATIVE, 'payload': {payload_name: DLC_RELATIVE + '/' + payload_name}}
+        host_startup = manifest.get('host_startup')
+        if host_startup is not None:
+            if not isinstance(host_startup, dict) or set(host_startup) != {'kind', 'library_sha256'}:
+                raise GameCoreError('invalid startup correction declaration')
+            if host_startup['kind'] != startup.KIND:
+                raise GameCoreError('unsupported startup correction')
+            require_hash(host_startup['library_sha256'])
+            destinations['host_startup'] = startup.LIBRARY_RELATIVE
         if manifest['destinations'] != destinations:
             raise GameCoreError('artifact installation destinations do not match the trusted product')
         if set(manifest['conflicts']) != set(catalog['products']) - {product}:
@@ -128,7 +138,7 @@ def verify_package(directory: Path, catalog: dict = CATALOG) -> dict:
         for name, digest in files.items():
             safe_relative(name)
             require_hash(digest)
-            if name != BINARY and not name.startswith(('licenses/', 'payload/' + payload_name + '/')):
+            if name != BINARY and not (host_startup and name == startup.LIBRARY) and not name.startswith(('licenses/', 'payload/' + payload_name + '/')):
                 raise GameCoreError('unexpected artifact file: ' + name)
         actual = tree_files(directory)
         if set(actual) != set(files) | {'manifest.json', 'SHA256SUMS'}:
@@ -145,6 +155,8 @@ def verify_package(directory: Path, catalog: dict = CATALOG) -> dict:
             sums[name] = digest
         if sums != {name: digest for name, digest in actual.items() if name != 'SHA256SUMS'}:
             raise GameCoreError('SHA256SUMS verification failed')
+        if host_startup and actual.get(startup.LIBRARY) != host_startup['library_sha256']:
+            raise GameCoreError('startup correction library hash mismatch')
         if manifest['gamecore_sha256'] != actual[BINARY]:
             raise GameCoreError('GameCore hash mismatch')
         payload_files = {name: digest for name, digest in files.items() if name.startswith('payload/')}
@@ -155,9 +167,10 @@ def verify_package(directory: Path, catalog: dict = CATALOG) -> dict:
         if not manifest['licenses'] or any(name not in files or not name.startswith('licenses/') for name in manifest['licenses']):
             raise GameCoreError('missing licensing information')
         if catalog.get('verify_codesign', True):
-            signature = subprocess.run(['codesign', '--verify', '--strict', str(directory / BINARY)], capture_output=True, text=True)
-            if signature.returncode:
-                raise GameCoreError('GameCore code signature verification failed: ' + signature.stderr.strip())
+            for library in [BINARY] + ([startup.LIBRARY] if host_startup else []):
+                signature = subprocess.run(['codesign', '--verify', '--strict', str(directory / library)], capture_output=True, text=True)
+                if signature.returncode:
+                    raise GameCoreError(library + ' code signature verification failed: ' + signature.stderr.strip())
         return manifest
     except (KeyError, TypeError, ValueError, OSError) as error:
         raise GameCoreError('invalid GameCore artifact: ' + str(error)) from error
@@ -235,13 +248,19 @@ class ProductManager:
         self.root = self.user_data / 'WirSchaffenDLC' / 'GameCore' / app_id
         self.state_path = self.root / 'state.json'
         self.backup = self.root / 'stock.dylib'
+        self.host_backup = self.root / 'stock-executable'
+        self.host = self.app / startup.HOST_RELATIVE
+        self.startup_library = self.app / startup.LIBRARY_RELATIVE
+        self._safe(self.host)
+        self._safe(self.host_backup)
+        self._safe(self.startup_library)
         self.transaction = self.root / 'transaction'
         self.binary = self.app / BINARY_RELATIVE
         self._safe(self.binary)
         self._safe(self.root)
 
     def _names(self) -> list[str]:
-        return ['binary', *self.catalog['products'], *('cache-' + name for name in CACHES), 'state']
+        return ['binary', *self.catalog['products'], *('cache-' + name for name in CACHES), 'startup-library', 'host', 'state']
 
     def _safe(self, path: Path) -> None:
         for candidate in [path, *path.parents]:
@@ -263,6 +282,14 @@ class ProductManager:
                 require_hash(state['payload_sha256'])
             elif state['gamecore_sha256'] != state['stock_sha256']:
                 raise ValueError('stock state must identify the verified original')
+            host_startup = state.get('host_startup')
+            if host_startup is not None:
+                if state['product'] == 'stock' or host_startup['kind'] != startup.KIND:
+                    raise ValueError('invalid recorded startup correction')
+                if host_startup['stock_sha256'] not in self.catalog['host_hashes']:
+                    raise ValueError('unsupported recorded stock executable')
+                require_hash(host_startup['host_sha256'])
+                require_hash(host_startup['library_sha256'])
             return state
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise GameCoreError('invalid installation state: ' + str(error)) from error
@@ -286,20 +313,36 @@ class ProductManager:
             return {'status': 'interrupted', 'recovery_required': True, 'state_directory': str(self.root)}
         if not self.binary.is_file():
             raise GameCoreError('missing GameCore library')
-        host = self.app / 'Contents/MacOS/Civilization V'
-        self._safe(host)
-        if not host.is_file() or sha256(host) not in self.catalog['host_hashes']:
+        self._safe(self.host)
+        state = self._state()
+        host_startup = state.get('host_startup') if state else None
+        host_digest = sha256(self.host) if self.host.is_file() else None
+        expected_host = None
+        if host_startup:
+            self._safe(self.host_backup)
+            if not self.host_backup.is_file() or sha256(self.host_backup) != host_startup['stock_sha256']:
+                raise GameCoreError('canonical stock executable backup is missing or corrupt')
+            expected_host = host_startup['host_sha256']
+            self._safe(self.startup_library)
+            if self.startup_library.exists() and (not self.startup_library.is_file() or
+                    sha256(self.startup_library) != host_startup['library_sha256']):
+                return {'status': 'modified-startup', 'product': state['product']}
+            if host_digest == expected_host and not self.startup_library.is_file():
+                return {'status': 'missing-startup', 'product': state['product']}
+        if host_digest is None or (host_digest not in self.catalog['host_hashes'] and host_digest != expected_host):
             return {'status': 'unsupported-host', 'product': None}
         digest = sha256(self.binary)
-        state = self._state()
         if state:
             if self.backup.is_symlink() or not self.backup.is_file() or sha256(self.backup) != state['stock_sha256']:
                 raise GameCoreError('canonical stock backup is missing or corrupt')
             product = state['product']
             if product != 'stock' and self._payload_digest(product) != state['payload_sha256']:
                 return {'status': 'modified-payload', 'product': product}
-            if digest == state['gamecore_sha256']:
-                return {'status': 'managed', 'product': product, 'version': state.get('version'), 'gamecore_sha256': digest}
+            if digest == state['gamecore_sha256'] and (not host_startup or host_digest == expected_host):
+                return {'status': 'managed', 'product': product, 'version': state.get('version'),
+                        'gamecore_sha256': digest, 'host_startup': bool(host_startup)}
+            if host_startup and host_digest in self.catalog['host_hashes'] and digest == state['gamecore_sha256']:
+                return {'status': 'steam-restored', 'product': product, 'gamecore_sha256': digest}
             if digest in self.catalog['stock_hashes']:
                 return {'status': 'steam-restored', 'product': product, 'gamecore_sha256': digest}
             return {'status': 'unknown-binary', 'product': product, 'gamecore_sha256': digest}
@@ -328,6 +371,19 @@ class ProductManager:
             if cache.exists() and not cache.is_file():
                 raise GameCoreError('unexpected database cache path: ' + str(cache))
         state = self._state()
+        previous_startup = state.get('host_startup') if state else None
+        self._safe(self.startup_library)
+        if self.startup_library.exists() and not previous_startup:
+            raise GameCoreError('refusing an unowned startup library')
+        host_source = self.host_backup if previous_startup else self.host
+        self._safe(host_source)
+        host_digest = sha256(host_source)
+        self._safe(self.host_backup)
+        if self.host_backup.exists() and (not self.host_backup.is_file() or
+                sha256(self.host_backup) not in self.catalog['host_hashes']):
+            raise GameCoreError('canonical stock executable backup is corrupt')
+        if host_digest not in self.catalog['host_hashes']:
+            raise GameCoreError('a verified stock executable is required')
         stock_source = self.backup if self.backup.exists() else self.binary
         if current['status'] == 'legacy-lekmod' and not self.backup.exists():
             stock_source = self.binary.with_name(BINARY + '.lekmod-original')
@@ -339,10 +395,12 @@ class ProductManager:
             if not manifest or manifest['product'] != product:
                 raise GameCoreError('a verified matching artifact is required')
             supported = manifest['supported_stock_game_hashes']
-            if stock_digest not in supported['gamecore'] or sha256(self.app / 'Contents/MacOS/Civilization V') not in supported['executable']:
+            if stock_digest not in supported['gamecore'] or host_digest not in supported['executable']:
                 raise GameCoreError('artifact does not support this stock game build')
         return {'from': active, 'to': product, 'current_status': current['status'],
                 'stock_source': str(stock_source), 'stock_sha256': stock_digest,
+                'host_stock_source': str(host_source), 'host_stock_sha256': host_digest,
+                'host_startup': bool(manifest and manifest.get('host_startup')),
                 'state_directory': str(self.root), 'version': manifest['version'] if manifest else None}
 
     @contextmanager
@@ -363,6 +421,10 @@ class ProductManager:
             result = self.binary
         elif name == 'state':
             result = self.state_path
+        elif name == 'host':
+            result = self.host
+        elif name == 'startup-library':
+            result = self.startup_library
         elif name in self.catalog['products']:
             result = self._payload_path(name)
         elif name.startswith('cache-') and name[6:] in CACHES:
@@ -414,11 +476,14 @@ class ProductManager:
             shutil.rmtree(self.transaction)
             return
         journal = json.loads(journal_path.read_text())
-        if journal.get('app') != str(self.app) or set(journal.get('before', {})) != set(self._names()):
+        names = set(self._names())
+        recorded_names = set(journal.get('before', {}))
+        # Accept pre-startup journals without synthesizing new restoration targets.
+        if journal.get('app') != str(self.app) or recorded_names not in (names, names - {'host', 'startup-library'}):
             raise GameCoreError('invalid transaction journal')
         host = self.app / 'Contents/MacOS/Civilization V'
         self._safe(host)
-        if not host.is_file() or sha256(host) != journal.get('host_sha256'):
+        if not host.is_file() or sha256(host) not in {journal.get('host_sha256'), journal.get('host_after_sha256')}:
             raise GameCoreError('host changed during the transaction; refusing stale GameCore recovery')
         # Verify every backup before restoring any destination.
         for name, before in journal['before'].items():
@@ -451,10 +516,26 @@ class ProductManager:
                 self._replace(self.backup, Path(plan['stock_source']))
                 if sha256(self.backup) != plan['stock_sha256']:
                     raise GameCoreError('canonical stock backup failed verification')
+            host_startup = manifest.get('host_startup') if manifest else None
+            previous_state = self._state()
+            previous_startup = previous_state.get('host_startup') if previous_state else None
+            if host_startup and not self.host_backup.exists():
+                self._replace(self.host_backup, Path(plan['host_stock_source']))
+                if sha256(self.host_backup) != plan['host_stock_sha256']:
+                    raise GameCoreError('canonical stock executable backup failed verification')
             self.transaction.mkdir()
+            incoming_host = self.host_backup if previous_startup else self.host
+            if host_startup:
+                incoming_host = self.transaction / 'prepared-executable'
+                try:
+                    startup.prepare_host(self.host_backup, incoming_host)
+                except (OSError, startup.HostStartupError) as error:
+                    self._recover_locked()
+                    raise GameCoreError(str(error)) from error
             before_dir = self.transaction / 'before'
             before_dir.mkdir()
-            journal = {'app': str(self.app), 'host_sha256': sha256(self.app / 'Contents/MacOS/Civilization V'), 'before': {}}
+            journal = {'app': str(self.app), 'host_sha256': sha256(self.host),
+                       'host_after_sha256': sha256(incoming_host), 'before': {}}
             for name in self._names():
                 target = self._target(name)
                 if target.exists():
@@ -474,11 +555,26 @@ class ProductManager:
                     self._replace(self._payload_path(other), payload)
                 incoming_binary = package / BINARY if package else self.backup
                 self._replace(self.binary, incoming_binary)
+                if host_startup:
+                    self._replace(self.startup_library, package / startup.LIBRARY)
+                    self._replace(self.host, incoming_host)
+                elif previous_startup:
+                    self._replace(self.host, self.host_backup)
+                    self._replace(self.startup_library, None)
+                if sha256(self.host) != journal['host_after_sha256']:
+                    raise GameCoreError('installed startup executable failed verification')
+                if host_startup and sha256(self.startup_library) != host_startup['library_sha256']:
+                    raise GameCoreError('installed startup library failed verification')
                 state = {'schema_version': 1, 'app': str(self.app), 'product': product,
                          'version': plan['version'], 'stock_sha256': plan['stock_sha256'],
                          'gamecore_sha256': manifest['gamecore_sha256'] if manifest else plan['stock_sha256'],
                          'payload_sha256': self._payload_digest(product) if product != 'stock' else None,
-                         'manifest': manifest}
+                         'manifest': manifest,
+                         'host_startup': ({'kind': host_startup['kind'],
+                                           'stock_sha256': plan['host_stock_sha256'],
+                                           'host_sha256': journal['host_after_sha256'],
+                                           'library_sha256': host_startup['library_sha256']}
+                                          if host_startup else None)}
                 if sha256(self.binary) != state['gamecore_sha256']:
                     raise GameCoreError('installed GameCore failed verification')
                 if manifest:

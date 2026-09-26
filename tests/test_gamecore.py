@@ -302,5 +302,145 @@ class GameCoreTests(unittest.TestCase):
         restore.assert_called_once_with(self.app, self.user)
 
 
+class HostStartupTests(GameCoreTests):
+    # Inherit the existing installer regression cases as compatibility controls.
+    def setUp(self):
+        super().setUp()
+        self.host.chmod(0o751)
+        def prepare(source, destination):
+            import shutil
+            shutil.copy2(source, destination)
+            destination.write_bytes(source.read_bytes() + b' with fixed early dependency')
+        self.prepare = patch.object(core.startup, 'prepare_host', side_effect=prepare).start()
+        self.addCleanup(patch.stopall)
+
+    def startup_package(self, version='1'):
+        package = self.package(version=version)
+        (package / core.startup.LIBRARY).write_bytes(('signed correction ' + version).encode())
+        manifest = json.loads((package / 'manifest.json').read_text())
+        manifest['files'][core.startup.LIBRARY] = core.sha256(package / core.startup.LIBRARY)
+        manifest['host_startup'] = {'kind': core.startup.KIND, 'library_sha256': manifest['files'][core.startup.LIBRARY]}
+        manifest['destinations']['host_startup'] = core.startup.LIBRARY_RELATIVE
+        self.reseal(package, manifest)
+        return package
+
+    def reseal(self, package, manifest):
+        (package / 'manifest.json').write_text(json.dumps(manifest))
+        sums = core.tree_files(package)
+        (package / 'SHA256SUMS').write_text(''.join(f'{digest}  {name}\n' for name, digest in sorted(sums.items()) if name != 'SHA256SUMS'))
+
+    def test_startup_install_update_switch_and_byte_exact_stock_restore(self):
+        original = self.host.read_bytes()
+        package = self.startup_package()
+        result = self.manager.switch('lekmod', package)
+        self.assertTrue(result['host_startup'])
+        self.assertEqual(self.manager.host_backup.read_bytes(), original)
+        self.assertNotEqual(self.host.read_bytes(), original)
+        self.assertEqual(self.host.stat().st_mode & 0o777, 0o751)
+        self.manager.switch('lekmod', self.startup_package('2'))
+        self.assertEqual(self.manager.host_backup.read_bytes(), original)
+        self.manager.switch('vox-populi', self.package('vox-populi'))
+        self.assertEqual(self.host.read_bytes(), original)
+        self.assertFalse(self.manager.startup_library.exists())
+        self.manager.switch('lekmod', package)
+        self.manager.switch('stock')
+        self.assertEqual(self.host.read_bytes(), original)
+        self.assertEqual(self.host.stat().st_mode & 0o777, 0o751)
+        self.assertFalse(self.manager.startup_library.exists())
+
+    def test_startup_dry_run_does_not_patch_or_create_backups(self):
+        self.manager.switch('lekmod', self.startup_package(), dry_run=True)
+        self.assertFalse(self.manager.root.exists())
+        self.prepare.assert_not_called()
+
+    def test_failed_signing_leaves_application_unchanged(self):
+        package = self.startup_package()
+        before = core.tree_files(self.app)
+        self.prepare.side_effect = core.startup.HostStartupError('signature failed')
+        with self.assertRaisesRegex(core.GameCoreError, 'signature'):
+            self.manager.switch('lekmod', package)
+        self.assertEqual(before, core.tree_files(self.app))
+        self.assertFalse(self.manager.transaction.exists())
+
+    def test_interrupted_after_host_replacement_recovers_host_and_sidecar(self):
+        package = self.startup_package()
+        before = core.tree_files(self.app)
+        original_replace = self.manager._replace
+        def fail(destination, source):
+            original_replace(destination, source)
+            if destination == self.host:
+                raise RuntimeError('interruption after executable write')
+        with patch.object(self.manager, '_replace', side_effect=fail), patch.object(self.manager, '_recover_locked'):
+            with self.assertRaisesRegex(RuntimeError, 'interruption'):
+                self.manager.switch('lekmod', package)
+        self.assertEqual(self.manager.status()['status'], 'interrupted')
+        core.ProductManager(self.app, self.user, self.catalog).recover()
+        self.assertEqual(before, core.tree_files(self.app))
+
+    def test_stock_restore_failure_rolls_back_corrected_installation(self):
+        self.manager.switch('lekmod', self.startup_package())
+        before = core.tree_files(self.app)
+        original_replace = self.manager._replace
+        failed = False
+        def fail(destination, source):
+            nonlocal failed
+            original_replace(destination, source)
+            if destination == self.host and not failed:
+                failed = True
+                raise RuntimeError('restoration interruption')
+        with patch.object(self.manager, '_replace', side_effect=fail):
+            with self.assertRaises(RuntimeError):
+                self.manager.switch('stock')
+        self.assertEqual(before, core.tree_files(self.app))
+        self.assertEqual(self.manager.status()['status'], 'managed')
+
+    def test_steam_host_restoration_is_detected_and_can_be_reinstalled(self):
+        package = self.startup_package()
+        self.manager.switch('lekmod', package)
+        self.host.write_bytes(self.manager.host_backup.read_bytes())
+        self.assertEqual(self.manager.status()['status'], 'steam-restored')
+        self.manager.startup_library.unlink()
+        self.manager.switch('lekmod', package)
+        self.assertEqual(self.manager.status()['status'], 'managed')
+        self.host.write_bytes(b'unknown future Steam update')
+        with self.assertRaisesRegex(core.GameCoreError, 'unsupported-host'):
+            self.manager.switch('stock')
+        self.assertEqual(self.host.read_bytes(), b'unknown future Steam update')
+
+    def test_modified_library_or_backup_is_preserved(self):
+        package = self.startup_package()
+        self.manager.switch('lekmod', package)
+        self.manager.startup_library.write_bytes(b'user edit')
+        with self.assertRaisesRegex(core.GameCoreError, 'modified-startup'):
+            self.manager.switch('stock')
+        self.assertEqual(self.manager.startup_library.read_bytes(), b'user edit')
+        self.manager.startup_library.write_bytes((package / core.startup.LIBRARY).read_bytes())
+        self.manager.host_backup.write_bytes(b'corrupt backup')
+        with self.assertRaisesRegex(core.GameCoreError, 'backup'):
+            self.manager.switch('stock')
+
+    def test_unowned_library_and_symlinks_are_rejected(self):
+        package = self.startup_package()
+        self.manager.startup_library.write_bytes(b'unowned')
+        with self.assertRaisesRegex(core.GameCoreError, 'unowned'):
+            self.manager.switch('lekmod', package)
+        self.manager.startup_library.unlink()
+        self.manager.startup_library.symlink_to(self.host)
+        with self.assertRaisesRegex(core.GameCoreError, 'symlink'):
+            self.manager.switch('lekmod', package)
+
+    def test_manifest_cannot_choose_library_path_or_patch_kind(self):
+        package = self.startup_package()
+        manifest = json.loads((package / 'manifest.json').read_text())
+        for mutation in ('path', 'kind', 'hash'):
+            changed = copy.deepcopy(manifest)
+            if mutation == 'path': changed['destinations']['host_startup'] = 'Contents/MacOS/other.dylib'
+            if mutation == 'kind': changed['host_startup']['kind'] = 'arbitrary-patch'
+            if mutation == 'hash': changed['host_startup']['library_sha256'] = '0' * 64
+            self.reseal(package, changed)
+            with self.assertRaises(core.GameCoreError):
+                core.verify_package(package, self.catalog)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -24,4 +24,4 @@ civ5-dlc-packer = "civ5_dlc_packer:main"
 wir-schaffen-dlc = "civ5_dlc_installer:main"
 
 [tool.setuptools]
-py-modules = ["civ5_dlc_packer", "civ5_dlc_installer", "civ5_best_mods", "civ5_gamecore"]
+py-modules = ["civ5_dlc_packer", "civ5_dlc_installer", "civ5_best_mods", "civ5_gamecore", "civ5_host_startup"]

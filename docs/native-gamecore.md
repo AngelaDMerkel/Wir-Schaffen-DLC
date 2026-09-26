@@ -69,3 +69,26 @@ Release producers ad-hoc sign the GameCore before hashing it. The installer
 verifies that signature and copies the signed bytes without re-signing, so
 the installed binary continues to match the manifest and state hash. The
 independently pinned archive digest remains the product trust anchor.
+
+## Normal Steam launch with the startup correction
+
+Artifacts may request the fixed `sqlite-stat-inode64-v1` startup correction.
+WSDLC verifies the signed `libWirCiv5HostStat.dylib` against the archive inventory,
+adds its fixed `@executable_path` dependency in unused Mach-O header space and
+ad-hoc signs a staged executable. The supported original executable must match
+the pinned full SHA-256. No instruction or section is relocated. Steam's Play
+button then uses the installed correction without launch options or a separate
+launcher. Native Steam launch validation is pending for this local implementation.
+
+The original executable is preserved as `stock-executable` alongside the existing
+`stock.dylib`. State records original/installed executable and correction-library
+hashes. Both new application files participate in the same recovery transaction
+as GameCore and DLC. Switching to stock, or to an artifact without a startup
+correction, restores the original executable byte for byte and removes the owned
+correction library. Unowned files, changed libraries, corrupt backups and unknown
+Steam executable updates are rejected. A Steam integrity check that restores the
+known original is reported as `steam-restored`; reinstall the verified artifact
+or select stock. Existing unrelated engine patches must be restored first.
+
+The correction itself is supplied and validated by the native product. This
+installer feature does not establish complete gameplay or platform support.
