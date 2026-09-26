@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,27 @@ class ReleaseVersionTests(unittest.TestCase):
         with mock.patch.object(BUILD, 'output', side_effect=['arm64', 'wir-schaffen-dlc 999.0.0']):
             with self.assertRaisesRegex(RuntimeError, 'version check failed'):
                 BUILD.verify_native_binary(Path('/tmp/test-binary'), 'arm64')
+
+    def test_official_toolchain_uses_the_installed_certificate_distribution_version(self):
+        (self.root / '.github').mkdir()
+        python_version = (ROOT / '.github/release-python-version').read_text().strip()
+        requirements = (ROOT / 'requirements-release.txt').read_text()
+        (self.root / '.github/release-python-version').write_text(python_version)
+        (self.root / 'requirements-release.txt').write_text(requirements)
+        pyinstaller = re.search(r'^pyinstaller==([^\s]+)', requirements, re.MULTILINE)[1]
+        def tool_output(command, **kwargs):
+            if command[-2:] == ['PyInstaller', '--version']:
+                return pyinstaller
+            script = command[-1]
+            if 'platform.machine' in script:
+                return 'arm64'
+            if 'platform.python_version' in script:
+                return python_version
+            # Exercise the real installed package: certifi's __version__ may
+            # contain zero-padded calendar fields that its wheel normalizes.
+            return subprocess.check_output([sys.executable, '-c', script], text=True).strip()
+        with mock.patch.object(BUILD, 'output', side_effect=tool_output):
+            BUILD.validate_toolchain(BUILD.Toolchain('arm64', Path(sys.executable)), official=True)
 
 
 class ReleaseAssemblyTests(unittest.TestCase):

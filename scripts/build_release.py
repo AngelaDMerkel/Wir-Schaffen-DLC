@@ -96,7 +96,7 @@ def validate_toolchain(toolchain: Toolchain, official: bool = False) -> None:
         if match is None or pyinstaller != match.group(1):
             raise RuntimeError('PyInstaller version does not match the release dependency pin')
         certificate_pin = re.search(r'^certifi==([^\s]+)', (ROOT / 'requirements-release.txt').read_text(), re.MULTILINE)
-        certificate_version = output(toolchain.command('-c', 'import certifi; print(certifi.__version__)'))
+        certificate_version = output(toolchain.command('-c', "from importlib.metadata import version; print(version('certifi'))"))
         if certificate_pin is None or certificate_version != certificate_pin.group(1):
             raise RuntimeError('certificate bundle version does not match the release dependency pin')
 

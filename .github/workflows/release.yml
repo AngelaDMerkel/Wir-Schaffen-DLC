@@ -94,7 +94,7 @@ jobs:
           python-version-file: .github/release-python-version
           architecture: ${{ matrix.python_architecture }}
       - name: Install pinned release tools
-        run: python -m pip install --require-hashes -r requirements-release.txt
+        run: python -m pip install --force-reinstall --require-hashes -r requirements-release.txt
       - name: Test, build, sign, and verify native artifacts
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
