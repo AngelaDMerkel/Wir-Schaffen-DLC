@@ -21,6 +21,10 @@ class FakeGitHub:
         self.calls = []
         self.fail_upload_once = False
         self.corrupt_upload = False
+        self.published_releases = []
+
+    def is_latest_version(self, version):
+        return AUTO.is_latest_version(version, self.published_releases)
 
     def find_release(self, tag):
         return copy.deepcopy(self.release)
@@ -51,6 +55,7 @@ class FakeGitHub:
         self.calls.append(('publish', latest))
         self.release['draft'] = False
         self.release['immutable'] = True
+        self.published_releases.append(copy.deepcopy(self.release))
         return copy.deepcopy(self.release)
 
 
@@ -267,11 +272,36 @@ args.output.write_text('<svg>v' + version + ':' + (root / 'application.py').read
     def test_retry_of_older_run_does_not_displace_newer_latest_release(self):
         older = self.plan()
         self.git('checkout', '--quiet', '--detach', self.source)
-        self.plan('101', 8)
+        newer = self.plan('101', 8)
         self.git('checkout', '--quiet', '--detach', older['release_commit'])
         github = FakeGitHub()
+        github.published_releases.append({'tag_name': newer['tag'], 'draft': False, 'prerelease': False})
         AUTO.publish_release(self.repo, older, self.assets(older), github)
         self.assertEqual(github.calls[-1], ('publish', False))
+
+    def test_higher_version_becomes_latest_even_when_its_run_number_is_lower(self):
+        first = self.plan('100', 8)
+        self.git('checkout', '--quiet', '--detach', self.source)
+        queued_later = self.plan('101', 7)
+        github = FakeGitHub()
+        github.published_releases.append({'tag_name': first['tag'], 'draft': False, 'prerelease': False})
+        AUTO.publish_release(self.repo, queued_later, self.assets(queued_later), github)
+        self.assertEqual(queued_later['version'], '1.0.2')
+        self.assertEqual(github.calls[-1], ('publish', True))
+
+    def test_unpublished_tags_drafts_and_prereleases_do_not_block_latest(self):
+        plan = self.plan('100', 7)
+        self.git('checkout', '--quiet', '--detach', self.source)
+        self.plan('101', 8)
+        self.git('checkout', '--quiet', '--detach', plan['release_commit'])
+        github = FakeGitHub()
+        github.published_releases.extend([
+            {'tag_name': 'v3.0.0', 'draft': True, 'prerelease': False},
+            {'tag_name': 'v4.0.0', 'draft': False, 'prerelease': True},
+            {'tag_name': 'nightly', 'draft': False, 'prerelease': False},
+        ])
+        AUTO.publish_release(self.repo, plan, self.assets(plan), github)
+        self.assertEqual(github.calls[-1], ('publish', True))
 
     def published(self):
         plan, github = self.plan(), FakeGitHub()
@@ -294,6 +324,12 @@ args.output.write_text('<svg>v' + version + ':' + (root / 'application.py').read
         github.create_draft(plan, AUTO.release_marker(plan))
         with self.assertRaisesRegex(ValueError, 'published release'):
             AUTO.sync_source_branch(self.repo, plan, 'main', github)
+        self.assertIn(self.source, self.git('ls-remote', 'origin', 'refs/heads/main'))
+
+    def test_older_release_cannot_sync_when_newer_publication_has_not_synced_yet(self):
+        plan, github = self.published()
+        github.published_releases.append({'tag_name': 'v2.0.0', 'draft': False, 'prerelease': False})
+        self.assertIn('newer published release', AUTO.sync_source_branch(self.repo, plan, 'main', github))
         self.assertIn(self.source, self.git('ls-remote', 'origin', 'refs/heads/main'))
 
     def test_new_source_changes_are_preserved_and_used_to_render_the_synced_image(self):

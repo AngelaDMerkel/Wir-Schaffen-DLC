@@ -48,8 +48,9 @@ An older release retry never lowers a newer source version.
 5. Upload the two executable bundles and verify GitHub's reported sizes and
    SHA-256 digests.
 6. Publish the completed draft and show the new release in GitHub's Releases
-   section. It becomes Latest unless it is a retry of an older run superseded
-   by a newer automatic release.
+   section. It becomes Latest unless a higher stable version has already been
+   published. Workflow run numbers and queue order do not determine Latest;
+   unpublished tags, drafts, and prereleases do not block it.
 7. Synchronize the source versions and README images on `main` and
    `codex/shared-macos-gamecore` with the published version.
 

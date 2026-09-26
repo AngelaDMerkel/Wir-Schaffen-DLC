@@ -53,6 +53,24 @@ def next_version(base: str, tags: list[str]) -> str:
     return f'{major}.{minor}.{patch + 1}'
 
 
+def is_latest_version(version: str, releases) -> bool:
+    """Compare published stable versions, independent of workflow queue order."""
+    current = version_tuple(version)
+    for release in releases:
+        if release.get('draft') or release.get('prerelease'):
+            continue
+        tag = release.get('tag_name', '')
+        if not isinstance(tag, str) or not tag.startswith('v'):
+            continue
+        try:
+            candidate = version_tuple(tag[1:])
+        except ValueError:
+            continue
+        if candidate > current:
+            return False
+    return True
+
+
 def version_pattern(filename: str) -> str:
     name = 'version' if filename == 'pyproject.toml' else 'VERSION'
     return rf'(?m)^({name}\s*=\s*")([^"\n]+)(")'
@@ -215,18 +233,24 @@ class GitHub:
             args += ['--input', '-']
         return json.loads(subprocess.check_output(args, input=json.dumps(payload) if payload is not None else None, text=True))
 
-    def find_release(self, tag: str):
-        # Listing includes authenticated drafts, unlike some get-by-tag paths.
-        matches, page = [], 1
+    def releases(self):
+        page = 1
         while True:
             releases = self.api(f'releases?per_page=100&page={page}')
-            matches.extend(release for release in releases if release['tag_name'] == tag)
+            yield from releases
             if len(releases) < 100:
                 break
             page += 1
+
+    def find_release(self, tag: str):
+        # Listing includes authenticated drafts, unlike some get-by-tag paths.
+        matches = [release for release in self.releases() if release['tag_name'] == tag]
         if len(matches) > 1:
             raise ValueError('multiple releases use the planned tag')
         return matches[0] if matches else None
+
+    def is_latest_version(self, version: str) -> bool:
+        return is_latest_version(version, self.releases())
 
     def create_draft(self, plan: dict, body: str):
         # Reference the already-pushed tag. Do not ask the API to create it
@@ -307,12 +331,9 @@ def publish_release(root: Path, plan: dict, directory: Path, github: GitHub) -> 
             raise ValueError('GitHub upload verification failed: ' + asset.name)
     if not release['draft'] or marker not in (release.get('body') or ''):
         raise ValueError('release changed during upload')
-    # An older failed run retried later must not displace a newer push's release.
-    latest = True
-    for tag in git(root, 'tag', '--list').splitlines():
-        saved = tag_plan(root, tag)
-        if saved and saved['run_number'] > plan['run_number']:
-            latest = False
+    # Queue order can differ from run-number order. Only a higher published
+    # stable version should prevent this version becoming GitHub's Latest.
+    latest = github.is_latest_version(plan['version'])
     result = github.publish(release['id'], latest)
     if result.get('draft') or result.get('tag_name') != plan['tag']:
         raise ValueError('GitHub did not publish the expected release')
@@ -332,6 +353,8 @@ def sync_source_branch(root: Path, plan: dict, branch: str, github: GitHub) -> s
     if (not release or release.get('draft') or release.get('tag_name') != plan['tag']
             or release_marker(plan) not in (release.get('body') or '')):
         raise ValueError('source versions may only follow this run\'s published release')
+    if not github.is_latest_version(plan['version']):
+        return f'{branch}: retained source metadata because a newer published release exists'
     for attempt in range(3):
         git(root, 'fetch', '--quiet', '--no-tags', 'origin', f'refs/heads/{branch}')
         base = git(root, 'rev-parse', 'FETCH_HEAD')
