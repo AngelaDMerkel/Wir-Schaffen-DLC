@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('automatic_release', ROOT / 'scripts/automatic_release.py')
@@ -66,6 +67,19 @@ class AutomaticReleaseTests(unittest.TestCase):
         (self.repo / 'pyproject.toml').write_text('[project]\nversion = "0.5.0"\n')
         (self.repo / 'civ5_dlc_packer.py').write_text('VERSION = "0.5.0"\n')
         (self.repo / 'application.py').write_text('print("unchanged application")\n')
+        (self.repo / 'scripts').mkdir()
+        (self.repo / 'assets').mkdir()
+        (self.repo / 'scripts/render_main_menu.py').write_text('''import argparse
+from pathlib import Path
+import re
+root = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser()
+parser.add_argument('--output', type=Path, required=True)
+args = parser.parse_args()
+version = re.search(r'VERSION = "([^"]+)"', (root / 'civ5_dlc_packer.py').read_text())[1]
+args.output.write_text('<svg>v' + version + ':' + (root / 'application.py').read_text() + '</svg>')
+''')
+        (self.repo / AUTO.MENU_IMAGE).write_bytes(AUTO.menu_image(self.repo))
         self.git('add', '.')
         self.git('commit', '-qm', 'pushed source')
         self.source = self.git('rev-parse', 'HEAD')
@@ -114,7 +128,8 @@ class AutomaticReleaseTests(unittest.TestCase):
         self.assertEqual(AUTO.versions(self.repo), ['1.0.1', '1.0.1'])
         self.assertEqual(self.git('rev-parse', 'main'), self.source)
         self.assertEqual(self.git('rev-parse', 'HEAD^'), self.source)
-        self.assertEqual(self.git('diff', '--name-only', self.source, 'HEAD').splitlines(), ['civ5_dlc_packer.py', 'pyproject.toml'])
+        self.assertEqual(set(self.git('diff', '--name-only', self.source, 'HEAD').splitlines()), set(AUTO.RELEASE_FILES))
+        self.assertIn('v1.0.1', (self.repo / AUTO.MENU_IMAGE).read_text())
         self.assertEqual(self.git('ls-remote', 'origin', 'refs/tags/v1.0.1'), '')
         self.assertEqual(AUTO.tag_plan(self.repo, 'v1.0.1')['run_id'], '100')
 
@@ -257,6 +272,101 @@ class AutomaticReleaseTests(unittest.TestCase):
         github = FakeGitHub()
         AUTO.publish_release(self.repo, older, self.assets(older), github)
         self.assertEqual(github.calls[-1], ('publish', False))
+
+    def published(self):
+        plan, github = self.plan(), FakeGitHub()
+        AUTO.publish_release(self.repo, plan, self.assets(plan), github)
+        return plan, github
+
+    def test_published_version_and_image_are_synced_without_changing_application_code(self):
+        plan, github = self.published()
+        AUTO.sync_source_branch(self.repo, plan, 'main', github)
+        head = self.git('rev-parse', 'HEAD')
+        self.assertIn(head, self.git('ls-remote', 'origin', 'refs/heads/main'))
+        self.assertEqual(AUTO.versions(self.repo), ['1.0.1', '1.0.1'])
+        self.assertEqual((self.repo / AUTO.MENU_IMAGE).read_bytes(), AUTO.menu_image(self.repo))
+        self.assertEqual(set(self.git('diff', '--name-only', self.source, head).splitlines()), set(AUTO.RELEASE_FILES))
+        self.assertIn('already synchronized', AUTO.sync_source_branch(self.repo, plan, 'main', github))
+        self.assertEqual(self.git('rev-parse', 'HEAD'), head)
+
+    def test_unpublished_release_cannot_update_source_versions(self):
+        plan, github = self.plan(), FakeGitHub()
+        github.create_draft(plan, AUTO.release_marker(plan))
+        with self.assertRaisesRegex(ValueError, 'published release'):
+            AUTO.sync_source_branch(self.repo, plan, 'main', github)
+        self.assertIn(self.source, self.git('ls-remote', 'origin', 'refs/heads/main'))
+
+    def test_new_source_changes_are_preserved_and_used_to_render_the_synced_image(self):
+        plan, github = self.published()
+        self.git('checkout', '--quiet', 'main')
+        (self.repo / 'application.py').write_text('newer menu layout\n')
+        self.git('add', 'application.py')
+        self.git('commit', '-qm', 'concurrent user change')
+        newer = self.git('rev-parse', 'HEAD')
+        self.git('push', '-q', 'origin', 'main')
+        self.git('checkout', '--quiet', '--detach', plan['release_commit'])
+        AUTO.sync_source_branch(self.repo, plan, 'main', github)
+        self.assertEqual(self.git('rev-parse', 'HEAD^'), newer)
+        self.assertEqual((self.repo / 'application.py').read_text(), 'newer menu layout\n')
+        self.assertIn('newer menu layout', (self.repo / AUTO.MENU_IMAGE).read_text())
+
+    def test_push_race_refetches_and_preserves_the_new_user_commit(self):
+        plan, github = self.published()
+        competitor = self.base / 'competitor'
+        subprocess.run(['git', 'clone', '-q', '-b', 'main', str(self.remote), str(competitor)], check=True)
+        real_git = AUTO.git
+        raced = []
+        def race(root, *args, **kwargs):
+            if root == self.repo and args == ('push', 'origin', 'HEAD:refs/heads/main') and not raced:
+                (competitor / 'application.py').write_text('concurrent change during push\n')
+                real_git(competitor, 'add', 'application.py')
+                real_git(competitor, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                         'commit', '-qm', 'racing user commit')
+                raced.append(real_git(competitor, 'rev-parse', 'HEAD'))
+                real_git(competitor, 'push', '-q', 'origin', 'main')
+            return real_git(root, *args, **kwargs)
+        with mock.patch.object(AUTO, 'git', side_effect=race):
+            AUTO.sync_source_branch(self.repo, plan, 'main', github)
+        self.assertEqual(self.git('rev-parse', 'HEAD^'), raced[0])
+        self.assertEqual((self.repo / 'application.py').read_text(), 'concurrent change during push\n')
+        self.assertIn('concurrent change during push', (self.repo / AUTO.MENU_IMAGE).read_text())
+
+    def test_older_release_retry_cannot_downgrade_a_newer_source_version(self):
+        plan, github = self.published()
+        self.git('checkout', '--quiet', 'main')
+        AUTO.stamp_release_files(self.repo, '2.0.0')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'newer release version')
+        newer = self.git('rev-parse', 'HEAD')
+        self.git('push', '-q', 'origin', 'main')
+        self.git('checkout', '--quiet', '--detach', plan['release_commit'])
+        self.assertIn('retained newer', AUTO.sync_source_branch(self.repo, plan, 'main', github))
+        self.assertEqual(self.git('rev-parse', 'HEAD'), newer)
+        self.assertEqual(AUTO.versions(self.repo), ['2.0.0', '2.0.0'])
+
+    def test_both_publishing_branches_receive_the_published_version(self):
+        self.git('push', '-q', 'origin', self.source + ':refs/heads/codex/shared-macos-gamecore')
+        plan, github = self.published()
+        heads = []
+        for branch in AUTO.PUBLISH_BRANCHES:
+            AUTO.sync_source_branch(self.repo, plan, branch, github)
+            heads.append(self.git('rev-parse', 'HEAD'))
+            self.assertIn(heads[-1], self.git('ls-remote', 'origin', 'refs/heads/' + branch))
+            self.assertEqual(AUTO.versions(self.repo), ['1.0.1', '1.0.1'])
+        self.assertEqual(heads[0], heads[1])
+
+    def test_dirty_source_is_rejected_before_version_synchronization(self):
+        plan, github = self.published()
+        (self.repo / 'application.py').write_text('unfinished work')
+        with self.assertRaisesRegex(ValueError, 'clean checkout'):
+            AUTO.sync_source_branch(self.repo, plan, 'main', github)
+        self.assertEqual((self.repo / 'application.py').read_text(), 'unfinished work')
+
+    def test_stale_release_image_prevents_publication(self):
+        plan = self.plan()
+        (self.repo / AUTO.MENU_IMAGE).write_text('<svg>v0.5.0</svg>')
+        with self.assertRaisesRegex(ValueError, 'README image'):
+            AUTO.publish_release(self.repo, plan, self.assets(plan), FakeGitHub())
 
 
 if __name__ == '__main__':

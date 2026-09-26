@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Create exact versioned CI checkouts and publish complete automatic releases.
 
-The workflow runs planning in a disposable checkout. Only the publishing job
-pushes the generated tag; it never writes a version commit back to a branch.
+The workflow plans in a disposable checkout. After publication it synchronizes
+the source versions and README image without changing other branch content.
 """
 from __future__ import annotations
 
@@ -13,10 +13,15 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 AUTOMATION = 'wsdlc-automatic-release-v1'
 VERSION_FILES = ('pyproject.toml', 'civ5_dlc_packer.py')
+MENU_IMAGE = 'assets/wir-schaffen-dlc-main.svg'
+RELEASE_FILES = (*VERSION_FILES, MENU_IMAGE)
+PUBLISH_BRANCHES = ('main', 'codex/shared-macos-gamecore')
 
 
 def git(root: Path, *args: str, env=None) -> str:
@@ -66,6 +71,36 @@ def versions(root: Path) -> list[str]:
     return result
 
 
+def menu_image(root: Path) -> bytes:
+    with tempfile.TemporaryDirectory(prefix='wsdlc-menu-') as temporary:
+        output = Path(temporary) / 'main.svg'
+        # A fresh cache location also avoids reading stale same-size .pyc files
+        # immediately after a version stamp. No cache is written into the repo.
+        env = os.environ | {'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONPYCACHEPREFIX': str(Path(temporary) / 'cache')}
+        subprocess.run([sys.executable, str(root / 'scripts/render_main_menu.py'), '--output', str(output)],
+                       cwd=root, env=env, check=True, stdout=subprocess.DEVNULL)
+        return output.read_bytes()
+
+
+def stamp_release_files(root: Path, version: str) -> None:
+    version_tuple(version)
+    versions(root)
+    for name in VERSION_FILES:
+        path = root / name
+        path.write_text(re.sub(version_pattern(name), lambda m: m[1] + version + m[3], path.read_text()))
+    (root / MENU_IMAGE).write_bytes(menu_image(root))
+
+
+def bot_environment(root: Path, source: str) -> dict[str, str]:
+    epoch = git(root, 'show', '-s', '--format=%ct', source)
+    return os.environ | {
+        'GIT_AUTHOR_NAME': 'github-actions[bot]', 'GIT_COMMITTER_NAME': 'github-actions[bot]',
+        'GIT_AUTHOR_EMAIL': '41898282+github-actions[bot]@users.noreply.github.com',
+        'GIT_COMMITTER_EMAIL': '41898282+github-actions[bot]@users.noreply.github.com',
+        'GIT_AUTHOR_DATE': f'{epoch} +0000', 'GIT_COMMITTER_DATE': f'{epoch} +0000',
+    }
+
+
 def validate_plan(plan: dict) -> None:
     if plan.get('automation') != AUTOMATION or plan.get('schema_version') != 1:
         raise ValueError('unrecognized release plan')
@@ -101,10 +136,12 @@ def check_release_checkout(root: Path, plan: dict) -> None:
     if git(root, 'rev-list', '--parents', '-n', '1', 'HEAD').split() != [plan['release_commit'], plan['source_commit']]:
         raise ValueError('release commit must have the pushed source as its sole parent')
     changed = set(git(root, 'diff', '--name-only', plan['source_commit'], plan['release_commit']).splitlines())
-    if not changed <= set(VERSION_FILES):
-        raise ValueError('release commit changed files other than version declarations')
+    if not changed <= set(RELEASE_FILES):
+        raise ValueError('release commit changed files other than versions and the README image')
     if versions(root) != [plan['version'], plan['version']]:
         raise ValueError('inconsistent stamped versions')
+    if (root / MENU_IMAGE).read_bytes() != menu_image(root):
+        raise ValueError('README image does not match the stamped release')
     if git(root, 'status', '--porcelain', '--untracked-files=all'):
         raise ValueError('release checkout must be clean')
     if tag_plan(root, plan['tag']) != {k: v for k, v in plan.items() if k != 'bundle_sha256'}:
@@ -133,17 +170,9 @@ def make_plan(root: Path, source: str, run_id: str, run_number: int, directory: 
     if plan is None:
         version = next_version(versions(root)[0], tags)
         tag = 'v' + version
-        for name in VERSION_FILES:
-            path = root / name
-            path.write_text(re.sub(version_pattern(name), lambda m: m[1] + version + m[3], path.read_text()))
-        epoch = git(root, 'show', '-s', '--format=%ct', source)
-        env = os.environ | {
-            'GIT_AUTHOR_NAME': 'github-actions[bot]', 'GIT_COMMITTER_NAME': 'github-actions[bot]',
-            'GIT_AUTHOR_EMAIL': '41898282+github-actions[bot]@users.noreply.github.com',
-            'GIT_COMMITTER_EMAIL': '41898282+github-actions[bot]@users.noreply.github.com',
-            'GIT_AUTHOR_DATE': f'{epoch} +0000', 'GIT_COMMITTER_DATE': f'{epoch} +0000',
-        }
-        git(root, 'add', '--', *VERSION_FILES)
+        stamp_release_files(root, version)
+        env = bot_environment(root, source)
+        git(root, 'add', '--', *RELEASE_FILES)
         git(root, '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m',
             f'Release {tag}\n\nSource-Commit: {source}\nWorkflow-Run: {run_id}', env=env)
         plan = {'schema_version': 1, 'automation': AUTOMATION, 'version': version, 'tag': tag,
@@ -290,6 +319,47 @@ def publish_release(root: Path, plan: dict, directory: Path, github: GitHub) -> 
     return result
 
 
+def sync_source_branch(root: Path, plan: dict, branch: str, github: GitHub) -> str:
+    """Update only release metadata in a clean, disposable CI checkout."""
+    validate_plan(plan)
+    if branch not in PUBLISH_BRANCHES:
+        raise ValueError('refusing to synchronize an unconfigured publishing branch')
+    if git(root, 'status', '--porcelain', '--untracked-files=all'):
+        raise ValueError('version synchronization requires a clean checkout')
+    if tag_plan(root, plan['tag']) != {key: value for key, value in plan.items() if key != 'bundle_sha256'}:
+        raise ValueError('release plan differs from its annotated tag')
+    release = github.find_release(plan['tag'])
+    if (not release or release.get('draft') or release.get('tag_name') != plan['tag']
+            or release_marker(plan) not in (release.get('body') or '')):
+        raise ValueError('source versions may only follow this run\'s published release')
+    for attempt in range(3):
+        git(root, 'fetch', '--quiet', '--no-tags', 'origin', f'refs/heads/{branch}')
+        base = git(root, 'rev-parse', 'FETCH_HEAD')
+        git(root, 'checkout', '--quiet', '--detach', base)
+        if version_tuple(versions(root)[0]) > version_tuple(plan['version']):
+            return f'{branch}: retained newer source version'
+        stamp_release_files(root, plan['version'])
+        changed = set(git(root, 'diff', '--name-only').splitlines())
+        if not changed <= set(RELEASE_FILES):
+            raise ValueError('version synchronization changed unrelated source files')
+        if not changed:
+            return f'{branch}: already synchronized with {plan["tag"]}'
+        git(root, 'add', '--', *RELEASE_FILES)
+        git(root, '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', 'commit', '-m',
+            f'Synchronize source version and README image with {plan["tag"]} [skip ci]',
+            env=bot_environment(root, base))
+        try:
+            # A normal fast-forward push preserves concurrent user changes.
+            git(root, 'push', 'origin', f'HEAD:refs/heads/{branch}')
+            return f'{branch}: synchronized with {plan["tag"]}'
+        except subprocess.CalledProcessError:
+            remote = git(root, 'ls-remote', '--heads', 'origin', f'refs/heads/{branch}').split()
+            if attempt == 2 or not remote or remote[0] == base:
+                raise
+            # The branch advanced: regenerate from its new source next time.
+    raise AssertionError('unreachable')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -304,6 +374,10 @@ def main() -> None:
     publish.add_argument('--plan', type=Path, required=True)
     publish.add_argument('--assets', type=Path, required=True)
     publish.add_argument('--repository', required=True)
+    sync = commands.add_parser('sync')
+    sync.add_argument('--plan', type=Path, required=True)
+    sync.add_argument('--repository', required=True)
+    sync.add_argument('--branch', action='append', choices=PUBLISH_BRANCHES, required=True)
     args = parser.parse_args()
     try:
         if args.command == 'plan':
@@ -315,13 +389,22 @@ def main() -> None:
             print(json.dumps(plan, indent=2))
         elif args.command == 'restore':
             print(json.dumps(restore_plan(ROOT, args.directory), indent=2))
-        else:
+        elif args.command == 'publish':
             plan = json.loads(args.plan.read_text())
             result = publish_release(ROOT, plan, args.assets, GitHub(args.repository))
             print(result['html_url'])
             if os.environ.get('GITHUB_STEP_SUMMARY'):
                 with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
                     summary.write(f'### WSDLC {plan["tag"]}\n\nPublished arm64 and amd64 downloads: {result["html_url"]}\n\nSource push: `{plan["source_commit"]}`. Release commit: `{plan["release_commit"]}`.\n')
+        else:
+            plan = json.loads(args.plan.read_text())
+            github = GitHub(args.repository)
+            for branch in dict.fromkeys(args.branch):
+                message = sync_source_branch(ROOT, plan, branch, github)
+                print(message)
+                if os.environ.get('GITHUB_STEP_SUMMARY'):
+                    with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                        summary.write(message + '\n\n')
     except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'error: {error}\n')
 

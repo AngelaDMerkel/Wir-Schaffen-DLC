@@ -77,7 +77,9 @@ the [compatibility matrix](docs/compatibility.md) for tested content, and the
 Pushing to `main` or `codex/shared-macos-gamecore` automatically assigns the
 next release version, builds both native architectures, and publishes a GitHub
 release containing just the two verified executable bundles. No manual version
-bump, tag, or release creation is needed. See [automatic releases](docs/releasing.md).
+bump, tag, or release creation is needed. After publication, the source version
+and main-menu image update automatically to match. See
+[automatic releases](docs/releasing.md).
 
 ## Development
 

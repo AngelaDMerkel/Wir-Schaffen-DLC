@@ -5,8 +5,8 @@ then assigns a version, builds arm64 and amd64, and publishes the complete
 release automatically. There is no separate tag, version-edit, or Publish
 Release step. Commit and push this workflow update once to enable that behavior.
 
-The built-in `GITHUB_TOKEN` handles publication. No personal token or automatic
-commit back to your development branches is required. Pull requests, other
+The built-in `GITHUB_TOKEN` handles publication and the automatic source-version
+update afterward. No personal token is required. Pull requests, other
 branches, tag pushes, and branch deletions do not publish releases.
 
 ## Automatic versioning
@@ -20,18 +20,24 @@ a new series; ordinary pushes require no version edits.
 
 Planning occurs in the disposable CI checkout. It stamps the chosen version
 into `pyproject.toml` and `civ5_dlc_packer.py`, then creates a release commit
-whose sole parent is the exact commit you pushed. Only those two declarations
-may differ from the pushed source. An annotated tag records the original
-source commit, release commit, and workflow run identity.
+whose sole parent is the exact commit you pushed. It also regenerates
+`assets/wir-schaffen-dlc-main.svg` from that version of the installer. Only the
+two version declarations and the generated README image may differ from the
+pushed source. An annotated tag records the original source commit, release
+commit, and workflow run identity.
 
 Both architecture jobs restore that same versioned commit from a checksummed
-Git bundle. The native CLI version, Python package metadata, filenames, tag,
-and release manifest must agree. Your source branches remain unchanged; only
-the tested release tag is pushed back to GitHub.
+Git bundle. The native CLI version, installer screens, Python package metadata,
+README image, filenames, tag, and release manifest must agree. A stale README
+image fails validation before publication.
 
-The current source base can therefore remain `0.5.0` while automatic tagged
-release snapshots progress through `1.0.1`, `1.0.2`, and subsequent versions.
-The tagged source and its binaries always contain the actual release version.
+After successful publication, the workflow synchronizes both publishing branches
+with that release version and regenerates each branch's README image from its
+own installer code. It commits only the two version declarations and the image;
+other source content stays on its existing branch. The source version is the
+latest published baseline, while the release tag identifies the exact shipped
+code. Pull the branch updates to receive the new version in a local checkout.
+An older release retry never lowers a newer source version.
 
 ## Build, upload, and publication
 
@@ -44,6 +50,8 @@ The tagged source and its binaries always contain the actual release version.
 6. Publish the completed draft and show the new release in GitHub's Releases
    section. It becomes Latest unless it is a retry of an older run superseded
    by a newer automatic release.
+7. Synchronize the source versions and README images on `main` and
+   `codex/shared-macos-gamecore` with the published version.
 
 This draft-first flow also supports GitHub's immutable releases: assets are
 complete before publication seals the release. Failed builds create no public
@@ -85,10 +93,17 @@ replaced automatically. A complete published release is left untouched;
 published downloads are never clobbered. Unrelated user-created releases,
 conflicting tags, changed source, and checksum failures are rejected.
 
-Only the final publishing job has repository write permission, and it never
-force-pushes tags or updates source branches. Creating tags does not recursively
-trigger this branch-push workflow. Manual workflow dispatch remains available
-for maintenance, but is not part of normal publication.
+Only the final publishing job has repository write permission. It never
+force-pushes tags or branches. If a user pushes while version synchronization
+is running, the workflow fetches the newer source, regenerates its image, and
+retries up to three times. Permission failures or repeated races leave a clear
+failed synchronization step; rerunning the workflow reuses the existing release.
+Published binaries are not overwritten.
+
+The synchronization commit uses `GITHUB_TOKEN` and includes `[skip ci]`, so it
+does not start another release. Manual workflow dispatch remains available for
+maintenance, but is not part of normal publication. See GitHub's
+[workflow-trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
 
 `actionlint` 1.7.12 does not yet recognize GitHub's documented `queue` property.
 For that version, lint with this one narrow schema exception:
@@ -115,6 +130,11 @@ tagged checkout and the pinned Python/PyInstaller versions. Local untagged
 builds do not carry official release identity.
 
 Developer ID signing and Apple notarization remain outside this workflow.
+
+When changing the installer layout or branding, regenerate the README image
+with `python3 scripts/render_main_menu.py`. Verify it without changing files
+with `python3 scripts/render_main_menu.py --check`. CI and the release planner
+also check the image against the installer that produced it.
 
 References: [GitHub workflow queues](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency),
 [immutable release publication](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases),

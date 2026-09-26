@@ -118,9 +118,16 @@ def render() -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT / 'assets/wir-schaffen-dlc-main.svg')
+    parser.add_argument('--check', action='store_true', help='fail if the saved image differs from the current installer')
     args = parser.parse_args()
+    rendered = render()
+    if args.check:
+        if not args.output.is_file() or args.output.read_text(encoding='utf-8') != rendered:
+            parser.exit(1, 'error: README main-menu image is stale; run scripts/render_main_menu.py\n')
+        print('README main-menu image matches the current installer and version.')
+        return
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(render(), encoding='utf-8')
+    args.output.write_text(rendered, encoding='utf-8')
     print(args.output)
 
 
